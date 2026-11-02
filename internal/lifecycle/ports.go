@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"syscall"
 
 	"github.com/gofrs/flock"
 
@@ -98,7 +97,7 @@ func claimAvailablePort(ctx context.Context, store state.Store, preferred uint16
 			var err error
 			var listen net.ListenConfig
 			listener, err = listen.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
-			if errors.Is(err, syscall.EADDRINUSE) {
+			if errors.Is(err, addressInUse) {
 				continue
 			}
 			if err != nil {
@@ -133,7 +132,7 @@ func claimAvailablePort(ctx context.Context, store state.Store, preferred uint16
 				wildcard, probeErr := probe.Listen(ctx, "tcp4", net.JoinHostPort("0.0.0.0", strconv.Itoa(int(port))))
 				if probeErr != nil {
 					closeErr := lease.Close()
-					if errors.Is(probeErr, syscall.EADDRINUSE) && closeErr == nil {
+					if errors.Is(probeErr, addressInUse) && closeErr == nil {
 						continue
 					}
 					return 0, nil, errors.Join(probeErr, closeErr)

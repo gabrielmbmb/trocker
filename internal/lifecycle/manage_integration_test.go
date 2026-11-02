@@ -57,8 +57,8 @@ func TestLifecyclePreservesIdentityAndVolumeData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stopped[0].ID != original.ID || stopped[0].State != container.StateExited {
-		t.Fatal("stop removed or failed to stop the container")
+	if len(stopped) != 1 || stopped[0].ID != original.ID || stopped[0].State != container.StateExited {
+		t.Fatalf("stop removed or failed to stop container %s: observed %+v; progress: %s", original.ID, stopped, &progress)
 	}
 	// Existing-resource commands must not depend on a valid current Compose file.
 	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte("invalid: ["), 0o600); err != nil {
