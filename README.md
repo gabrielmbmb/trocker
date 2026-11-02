@@ -4,7 +4,16 @@ Isolated development environments for Git worktrees, powered by Docker Compose.
 
 **Worktrees isolate code, not running environments.** Coding agents can work on multiple branches at once, but each needs its own services, ports, and application URLs to test changes independently.
 
-**Trocker gives each worktree its own stack.** Reuse your Compose definitions, declare application bindings, and let Trocker isolate resources, assign ports, and connect your apps—without wiring up every environment by hand.
+**Trocker gives each worktree its own stack.** Reuse your Compose definitions and let Trocker isolate resources, assign ports, and connect your apps—without wiring up every environment by hand.
+
+## The workflow
+
+**Configure once, start an environment in each worktree.** Use Trocker's skills with Codex, Claude Code, Pi, OpenCode, or another coding agent:
+
+1. **Set up the project** with `trocker-setup`. The agent analyzes your Compose files and application settings, configures `trocker.yaml`, and validates it. Commit the manifest alongside your Compose files.
+2. **Work in a Git worktree.** Create or open the worktree where you or your agent will make changes.
+3. **Start its environment** with `trocker-up`. The agent registers the worktree if needed, starts its isolated stack, and reports the current addresses.
+4. **Develop and test independently.** Other worktrees keep their own stacks and managed data.
 
 ## Install
 
@@ -17,36 +26,80 @@ Or download a binary for macOS, Linux, or Windows (amd64/arm64) from [GitHub Rel
 
 You'll need Git, a Compose project, and a reachable local Docker daemon running Linux containers. Native application execution and generated configuration files require Linux or macOS.
 
-## Quick start
+## Set up your agent
 
-### 1. Let your coding agent configure the project
+Copy these directories into your agent's skills directory, keeping their contents intact:
 
-**Recommended:** use the [trocker-setup skill](skills/trocker-setup/SKILL.md) with Codex, Claude Code, Pi, OpenCode, or another coding agent. Tracing Compose files and wiring application bindings by hand is tedious; the skill guides your agent through that work.
+| Skill | When to use it |
+| --- | --- |
+| [`trocker-setup`](skills/trocker-setup/) | Configure a project for Trocker; includes Compose-analysis and manifest references |
+| [`trocker-up`](skills/trocker-up/) | Start an environment in a worktree that already has `trocker.yaml` |
 
-Copy the complete [`skills/trocker-setup/`](skills/trocker-setup/) directory, including `references/`, into your agent's skills directory. Alternatively, give your agent a local copy and ask it to read `SKILL.md` and its references. From your project's checkout, ask:
+If your agent doesn't discover skills automatically, give it a local copy and ask it to read the skill's `SKILL.md` and linked references.
 
-> Use the trocker-setup skill to configure this project. Analyze the Compose hierarchy and application settings, configure trocker.yaml, and validate with trocker doctor and trocker plan. Don't start containers or change unrelated files.
+### Set up the project once
 
-Review the proposed configuration and confirm `trocker init` in a terminal when prompted. Initialization registers the workspace without creating Docker resources. If the agent cannot handle interactive confirmation, run `trocker init` yourself and let it continue.
+From your project's checkout, ask:
 
-### 2. Start your environment
+> Set up Trocker for this project.
 
-Once setup checks pass:
+Review the configuration and confirm `trocker init` in a terminal when prompted. Initialization registers the workspace without creating Docker resources. If the agent cannot handle interactive confirmation, run `trocker init` yourself and let it continue.
 
-```bash
-trocker up --detach    # Start the stack and wait for running/healthy services
-trocker endpoints     # Show addresses for configured endpoints
-```
+The setup skill checks configuration without starting containers. Once validation passes, commit `trocker.yaml` so other worktrees can use it.
 
-Commit `trocker.yaml` alongside your Compose files. Run `trocker init` in each additional worktree to register its separate workspace identity.
+### Start each worktree's environment
 
-Use `trocker up` without `--detach` to follow application logs, or add `--build` to rebuild images. To start selected services and their Compose dependencies, use `trocker up --detach SERVICE...`.
+Open your agent in the intended worktree and ask:
 
-## Manual configuration
+> Start this worktree's environment with Trocker.
 
-**Prefer to configure it yourself?** Run `trocker init` to generate a minimal `trocker.yaml` using Compose's default file selection, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack.
+The agent uses the existing configuration, checks the plan, and runs `trocker up --detach`. A new worktree needs its own confirmed registration. The agent then checks service state and reports observed endpoint addresses—no manual port assignment required.
 
-Keep service definitions in Compose and put Trocker endpoints and bindings in `trocker.yaml`:
+**Use the reported addresses.** Ports can change after a restart. A published endpoint is not, by itself, proof that the application is ready.
+
+## Everyday commands
+
+You can manage the stack directly at any time:
+
+| Command | Purpose |
+| --- | --- |
+| `trocker up --detach` | Create or update the stack and wait for running/healthy services |
+| `trocker up --detach --build` | Rebuild images and start the stack |
+| `trocker status` | Show workspace containers and their state/health |
+| `trocker endpoints` | Show current addresses; add `--json` for machine-readable output |
+| `trocker plan` / `trocker doctor` | Preview changes or check configuration without writes |
+| `trocker stop [SERVICE...]` | Stop containers without deleting resources |
+| `trocker start [SERVICE...]` | Restart existing containers without applying configuration edits |
+| `trocker down` | Remove workspace containers and networks; retain volumes |
+| `trocker down --volumes` | Also remove managed named and attached anonymous volumes |
+| `trocker help COMMAND` | Show command options |
+
+Use `up`, not `start`, to apply configuration changes. Service arguments to `up` select services and their Compose dependencies. Run `trocker up` without `--detach` to follow logs; end that foreground session before another mutating command for the same workspace.
+
+**Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Images and bind-mounted files are retained. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
+
+## Supported scope
+
+Trocker supports **local Docker targets, ordinary Compose bridge networking, and IPv4 loopback TCP publications**. It replaces host port mappings, removes `container_name`, and isolates managed resource names and build tags.
+
+Not every Compose project is supported unchanged. Trocker rejects unsafe sharing and unsupported features, including:
+
+- Remote targets, UDP/IPv6 publications, and nonstandard network modes.
+- External or explicitly named networks/volumes, writable bind mounts, and custom network addressing/drivers.
+- Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged/device/namespace access, and advanced build access/tags.
+- User-declared Compose secrets, configs, and models. Trocker's generated files are supported separately.
+
+Built service names must be lowercase. The setup skill reports blockers rather than silently rewriting your Compose project. `trocker doctor` checks the supported subset; it is not a general security audit.
+
+Trocker checks Compose and workspace ownership before changing resources. It does not automatically approve recreation prompts, remove orphans, or delete volumes after failed startup. Missing or conflicting registration requires explicit recovery; automatic recovery and forgetting are not implemented. `status` currently lists containers, not retained networks or volumes.
+
+## Alternatives and advanced configuration
+
+### Configure manually
+
+**Skills are recommended, not required.** Run `trocker init` to propose a minimal `trocker.yaml`, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack.
+
+Keep service definitions in Compose:
 
 ```yaml
 version: 1
@@ -67,106 +120,34 @@ bindings:
         API_URL: "{{ endpoints.api.host.url }}"
 ```
 
-This example assumes your Compose project defines `backend` and `web`, and that `backend` declares TCP port `8000` through `ports` or `expose`. When starting only `web`, declare `backend` in its `depends_on` or select both services.
+This example requires Compose services named `backend` and `web`, with `backend` declaring TCP port `8000` through `ports` or `expose`. When starting only `web`, declare `backend` in its `depends_on` or select both services.
 
 - **Container addresses** use Compose DNS, such as `http://backend:8000`.
-- **Host addresses** use an assigned loopback port, such as `http://127.0.0.1:24001`. Use these for local applications or browsers, not container-to-container requests.
-- **Container bindings** override Compose environment values. **Native bindings** apply only to `trocker run`.
+- **Host addresses** use assigned loopback ports for local applications or browsers, not container-to-container requests.
+- **Container bindings** override Compose environment values; **native bindings** apply only to `trocker run`.
 - Every managed container and native application receives `TROCKER_WORKSPACE_ID`.
 
-Applications must read bindings at runtime; frontend build-time substitution is not provided. Ports are not guaranteed to stay the same—use `trocker endpoints` for current addresses. Declaring an endpoint does not configure TLS or guarantee application readiness.
+Applications must consume these settings at runtime; frontend build-time substitution is not provided. Endpoint declarations do not configure TLS. See [configuration and bindings](docs/architecture.md#configuration-and-bindings) for the full contract.
 
-See [configuration and bindings](docs/architecture.md#configuration-and-bindings) for supported fields and validation rules.
+### Run your application outside Docker
 
-## Run your application locally
-
-Keep dependencies in Docker while running your application directly on your machine:
+Keep dependencies in Docker and run your application locally using the native bindings above:
 
 ```bash
 trocker up --detach backend
 trocker run web -- pnpm dev
 ```
 
-`run` is a native-process command, **not** Compose's one-off container command. The selected service must exist in Compose, but its container is not started. Dependencies referenced by native bindings must already be running.
+`run` starts a native process, **not** a one-off container. The selected service must exist in Compose, but its container is not started. Referenced dependencies must already be running.
 
-The application runs in your current directory with your inherited environment plus native bindings. It does not inherit the service's Compose environment. Standard input/output and exit codes pass through; arguments after `--` are passed directly without shell expansion.
+The child uses your current directory and inherited environment plus native bindings—not Compose environment values. Standard streams and exit codes pass through, and arguments are passed without shell expansion. Native execution supports Linux/macOS, runs with your normal permissions, and does not allocate the application's own listening port.
 
-Native execution is supported on Linux and macOS. It runs with your normal permissions, is not a supervisor, and does not allocate the application's own listening port.
+### Generate configuration files
 
-## Generate application configuration
+For applications that read files rather than environment variables, declare templates under `bindings.<service>.files` for containers or `bindings.<service>.native.files` for local processes. Trocker renders private immutable files and exposes their paths through bindings; container delivery is read-only.
 
-For applications that read files instead of environment variables, declare a template and explicit values:
-
-```yaml
-bindings:
-  web:
-    native:
-      files:
-        app_config:
-          template: .trocker/app.json.tmpl
-          output: app.json
-          format: json
-          values:
-            api_url: "{{ endpoints.api.host.url }}"
-      environment:
-        APP_CONFIG: "{{ files.app_config.path }}"
-```
-
-Create `.trocker/app.json.tmpl`:
-
-```gotemplate
-{
-  "apiUrl": {{ json .api_url }}
-}
-```
-
-Trocker renders the file into private state before launching your application and supplies its path through `APP_CONFIG`. Templates must be inside the manifest directory tree; `output` is a filename, not a checkout path. Formats are `json` and `text`.
-
-For container delivery, place `files` and `environment` directly under `bindings.web` instead of `native`, add an absolute `target` such as `/run/app.json`, and use container endpoint addresses where appropriate. `up` delivers files read-only through Compose configs; `start` keeps the existing generation. All users inside the receiving container can read the mounted file.
-
-**Generated files are not automatically cleaned up.** Old generations, including any secrets they contain, remain in private state even after `down --volumes`.
-
-See [generated configuration files](docs/architecture.md#generated-configuration-files) for template rules, delivery, and retention details.
-
-## Manage your stack
-
-| Command | Purpose |
-| --- | --- |
-| `trocker plan` | Preview configuration and isolation changes without writes |
-| `trocker doctor` | Check unsupported configuration, bindings, and unsafe sharing |
-| `trocker status` | Show workspace containers and their state/health |
-| `trocker endpoints --json` | Get current endpoint addresses as JSON |
-| `trocker stop [SERVICE...]` | Stop containers without deleting resources |
-| `trocker start [SERVICE...]` | Restart existing containers and their dependencies |
-| `trocker down` | Remove workspace containers and networks; retain volumes |
-| `trocker down --volumes` | Also remove managed named and attached anonymous volumes |
-| `trocker help COMMAND` | Show command options |
-| `trocker completion bash` | Generate completion for Bash, Zsh, Fish, or PowerShell |
-| `trocker version` | Show the installed version |
-
-Use `up`, not `start`, to apply configuration changes. Docker-assigned ports may change after a restart.
-
-Teardown verifies ownership and preserves workspace registration. Images and bind-mounted files are retained. `start`, `stop`, and `down` can operate even if your current configuration has changed or disappeared.
-
-Foreground `up` holds the workspace mutation lock while attached; end that session before running another mutating command for the same workspace.
-
-## Supported scope and safeguards
-
-Trocker currently supports local Docker targets, ordinary Compose bridge networking, and IPv4 loopback TCP publications. It replaces host port mappings, removes explicit `container_name` values, and isolates managed resource names.
-
-Not every Compose feature is supported. Trocker rejects unsafe sharing and unsupported features, including:
-
-- Remote Docker targets, UDP publications, IPv6 publications, and nonstandard network modes.
-- External or explicitly named networks/volumes, writable bind mounts, and custom network addressing/drivers.
-- Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged/device/namespace access, and advanced build access/tags.
-- User-declared Compose secrets, configs, and models. Trocker's generated files are supported separately.
-
-Built service names must be lowercase. Run `trocker doctor` to check your project; it is not a general security audit.
-
-Trocker checks both Compose and workspace ownership before changing resources. It does not automatically approve recreation prompts, remove orphans, or delete volumes after failed startup. Correct the reported problem and retry.
-
-Workspace identity is stored outside your project files. Missing or conflicting registration requires explicit recovery; automatic recovery and forgetting are not yet implemented. `status` currently lists containers, not retained networks or volumes.
+See the [skill's manifest reference](skills/trocker-setup/references/manifest-reference.md#generated-files) for an example and [generated configuration files](docs/architecture.md#generated-configuration-files) for validation, permissions, and retention rules. All users inside a receiving container can read its mounted file, and old generations are retained.
 
 ## Architecture
 
-See [Architecture](docs/architecture.md) for component boundaries, configuration contracts, identity, allocation, and safety.
+See [Architecture](docs/architecture.md) for component boundaries, identity, allocation, and safety contracts.
