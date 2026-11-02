@@ -19,22 +19,32 @@ You'll need Git, a Compose project, and a reachable local Docker daemon running 
 
 ## Quick start
 
-From your project's Git checkout:
+### 1. Let your coding agent configure the project
+
+**Recommended:** use the [trocker-setup skill](skills/trocker-setup/SKILL.md) with Codex, Claude Code, Pi, OpenCode, or another coding agent. Tracing Compose files and wiring application bindings by hand is tedious; the skill guides your agent through that work.
+
+Copy the complete [`skills/trocker-setup/`](skills/trocker-setup/) directory, including `references/`, into your agent's skills directory. Alternatively, give your agent a local copy and ask it to read `SKILL.md` and its references. From your project's checkout, ask:
+
+> Use the trocker-setup skill to configure this project. Analyze the Compose hierarchy and application settings, configure trocker.yaml, and validate with trocker doctor and trocker plan. Don't start containers or change unrelated files.
+
+Review the proposed configuration and confirm `trocker init` in a terminal when prompted. Initialization registers the workspace without creating Docker resources. If the agent cannot handle interactive confirmation, run `trocker init` yourself and let it continue.
+
+### 2. Start your environment
+
+Once setup checks pass:
 
 ```bash
-trocker init           # Review and confirm configuration
-trocker plan           # Preview isolation changes
 trocker up --detach    # Start the stack and wait for running/healthy services
 trocker endpoints     # Show addresses for configured endpoints
 ```
-
-`init` uses Compose's default file selection to propose a minimal `trocker.yaml`, or validates an existing one without rewriting it. It requires interactive confirmation and creates no Docker resources. Add endpoints and application bindings explicitly, as shown below.
 
 Commit `trocker.yaml` alongside your Compose files. Run `trocker init` in each additional worktree to register its separate workspace identity.
 
 Use `trocker up` without `--detach` to follow application logs, or add `--build` to rebuild images. To start selected services and their Compose dependencies, use `trocker up --detach SERVICE...`.
 
-## Configure your project
+## Manual configuration
+
+**Prefer to configure it yourself?** Run `trocker init` to generate a minimal `trocker.yaml` using Compose's default file selection, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack.
 
 Keep service definitions in Compose and put Trocker endpoints and bindings in `trocker.yaml`:
 
