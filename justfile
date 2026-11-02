@@ -22,6 +22,10 @@ lint: _install-lint
     "{{lint_bin}}" config verify
     "{{lint_bin}}" run ./...
 
+# Include Docker integration test sources in static analysis.
+lint-integration: _install-lint
+    "{{lint_bin}}" run --build-tags=integration ./...
+
 # Apply the same formatting rules checked by lint and CI.
 fmt: _install-lint
     "{{lint_bin}}" fmt ./...
