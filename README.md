@@ -4,6 +4,18 @@ A Go CLI for isolated Docker Compose stacks per Git worktree.
 
 **Status:** `init`, `plan`, `doctor`, `up`, `start`, `stop`, `down`, `status`, `endpoints` (including `--json`), help, version, and shell completion work. `init` validates Compose configuration, resolves the selected local Docker daemon, and registers a persistent workspace identity after interactive confirmation. It does not create Docker resources. Native `run`, including optional generated configuration files, works on Linux and macOS. Invalid arguments return exit status 2.
 
+## Installation
+
+Install a published release with Homebrew:
+
+```bash
+brew tap gabrielmbmb/homebrew-tap
+brew install --cask trocker
+```
+
+Or download an archive from [GitHub Releases](https://github.com/gabrielmbmb/trocker/releases).
+Releases include macOS, Linux, and Windows binaries for amd64 and arm64.
+
 ## Commands
 
 ```bash
@@ -24,6 +36,17 @@ trocker help down                  # Or: trocker down --help
 ```
 
 All commands above are implemented within the initial supported subset. `run` is deliberately a native-process command, not Compose's one-off container command. Use `--` to separate its service from the child command and arguments.
+
+## Releases
+
+Pushing a version tag (for example, `v0.1.0`) runs GoReleaser to test, build,
+and publish archives, checksums, and a Git changelog to GitHub Releases.
+It also updates the `trocker` cask in `gabrielmbmb/homebrew-tap`;
+prereleases skip the tap update.
+
+Before the first release, configure the repository Actions secret
+`HOMEBREW_TAP_GITHUB_TOKEN` with write access to the tap repository.
+The workflow uses the automatic `GITHUB_TOKEN` for GitHub Releases.
 
 ## Initialization
 

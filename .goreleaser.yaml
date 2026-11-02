@@ -1,0 +1,57 @@
+version: 2
+
+project_name: trocker
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: trocker
+    main: ./cmd/trocker
+    binary: trocker
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: trocker
+    formats: ["tar.gz"]
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+
+homebrew_casks:
+  - name: trocker
+    repository:
+      owner: gabrielmbmb
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore: update trocker cask to {{ .Tag }}"
+    homepage: "https://github.com/gabrielmbmb/trocker"
+    description: "Isolated Docker Compose stacks per Git worktree."
+    license: "Apache-2.0"
+    ids:
+      - trocker
+    skip_upload: auto
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/trocker"]
+          end
+
+changelog:
+  use: git

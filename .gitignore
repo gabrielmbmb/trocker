@@ -3,6 +3,7 @@
 #
 # Local builds and pinned development tools
 /bin/
+/dist/
 /.tools/
 
 # Binaries for programs and plugins
