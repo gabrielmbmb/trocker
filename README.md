@@ -28,14 +28,26 @@ You'll need Git, a Compose project, and a reachable local Docker daemon running 
 
 ## Set up your agent
 
-Copy these directories into your agent's skills directory, keeping their contents intact:
+Install both skills into your project with the [skills CLI](https://github.com/vercel-labs/skills) (Node.js 22.20 or later):
+
+```bash
+npx skills add gabrielmbmb/trocker
+```
+
+Choose Claude Code, Codex, OpenCode, and/or Pi when prompted. The CLI installs the skills at project scope: `.agents/skills/` for Codex, OpenCode, and Pi, with `.claude/skills/` linked for Claude Code. Commit those directories and `skills-lock.json` to share the setup with your team, or add `-g` to make the skills available in every project.
+
+For non-interactive installs, select the agents explicitly:
+
+```bash
+npx skills add gabrielmbmb/trocker -a claude-code -a codex -a pi -a opencode -y
+```
+
+Add `--copy` if symlinks are unavailable. With GitHub CLI, install them per agent using `gh skill install gabrielmbmb/trocker --all --agent <agent> --scope project`. Without either CLI, copy the skill directories below into `.claude/skills/` or `.agents/skills/` and ask your agent to read the skill's `SKILL.md`.
 
 | Skill | When to use it |
 | --- | --- |
 | [`trocker-setup`](skills/trocker-setup/) | Configure a project for Trocker; includes Compose-analysis and manifest references |
 | [`trocker-up`](skills/trocker-up/) | Start an environment in a worktree that already has `trocker.yaml` |
-
-If your agent doesn't discover skills automatically, give it a local copy and ask it to read the skill's `SKILL.md` and linked references.
 
 ### Set up the project once
 
