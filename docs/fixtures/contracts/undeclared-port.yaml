@@ -1,0 +1,8 @@
+version: 1
+compose:
+  - compose.yaml
+endpoints:
+  api:
+    service: backend
+    port: 9000
+    scheme: http

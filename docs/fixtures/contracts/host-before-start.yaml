@@ -1,0 +1,12 @@
+version: 1
+compose:
+  - compose.yaml
+endpoints:
+  api:
+    service: backend
+    port: 8000
+    scheme: http
+bindings:
+  web:
+    environment:
+      BROWSER_API_URL: "{{ endpoints.api.host.url }}"

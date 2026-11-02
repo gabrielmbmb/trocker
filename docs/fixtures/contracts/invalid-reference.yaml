@@ -1,0 +1,7 @@
+version: 1
+compose:
+  - compose.yaml
+bindings:
+  web:
+    environment:
+      API_URL: "{{ endpoints.missing.host.url }}"

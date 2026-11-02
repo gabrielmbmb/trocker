@@ -1,0 +1,17 @@
+version: 1
+compose: [compose.yaml]
+endpoints:
+  api: {service: backend, port: 8000, scheme: http}
+bindings:
+  web:
+    files:
+      app_config:
+        template: native-config.json.tmpl
+        output: app.json
+        target: /run/app.json
+        format: json
+        values:
+          api_url: "{{ endpoints.api.container.url }}"
+          workspace_id: "{{ workspace.id }}"
+    environment:
+      APP_CONFIG: "{{ files.app_config.path }}"

@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - durationcheck
+    - errorlint
+    - gosec
+    - modernize
+    - nilerr
+    - nolintlint
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: strict
+    warn-unused: true
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/gabrielmbmb/trocker
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

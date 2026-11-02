@@ -1,0 +1,9 @@
+services:
+  backend:
+    image: nginx:alpine
+    expose:
+      - "8000"
+  web:
+    image: nginx:alpine
+    expose:
+      - "3000"

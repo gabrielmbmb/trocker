@@ -1,6 +1,6 @@
 # Worktree isolation and endpoint bindings
 
-**Status:** Architecture proposal, not implemented behavior.
+**Status:** Supporting design report, not implemented behavior. See [Trocker architecture](../architecture.md) for the main architecture reference and component responsibilities.
 
 ## Summary
 
@@ -11,6 +11,10 @@ The central distinction is:
 > Automatically discovering services and allocating ports is feasible. Automatically understanding what every configuration value means is not reliably possible.
 
 Make discovery and isolation automatic, and express the missing application semantics in a small, one-time project configuration.
+
+The proposed implementation is a daemonless Go CLI using the official Compose SDK. See [Go architecture and local state](go-architecture-and-state.md) for SDK integration, planning and execution, platform-specific state locations, concurrency, and recovery.
+
+**Trocker must not become a speed bottleneck.** Ordinary commands do only the work needed for the selected workspace, without automatic repository-wide discovery, cleanup, or unrelated network calls. Measure incremental Trocker overhead separately from Docker/build/application wait time and establish evidence-based latency budgets; see [performance and responsiveness](go-architecture-and-state.md#9-performance-and-responsiveness).
 
 ## Lessons from the existing `just wt` implementation
 
@@ -68,6 +72,14 @@ Container addresses also require actual network reachability: a service name is 
 
 ## 2. Declare the missing semantic information once
 
+The first version is **explicit-first: discovery-assisted setup, explicit runtime configuration**. Every endpoint must declare `service`, `port`, and `scheme`, even when Compose exposes only one port. Discovery helps author and validate the manifest; it does not fill in missing endpoint fields at runtime. Adding a debugger port to Compose must not change which port an existing endpoint selects.
+
+- Keys under `endpoints` are logical aliases used in binding expressions.
+- `service` names an actual service in the resolved Compose configuration.
+- `port` is the service's container listening port, not its published host port. Trocker allocates or remaps the host port separately.
+- `scheme` describes the service's URL protocol, such as `http` or `https`. It cannot be reliably inferred from the port number, and declaring `https` does not enable TLS on the service.
+- Keys under `bindings` name the actual Compose services that receive the generated environment values.
+
 A hypothetical project manifest could look like this. **This is proposed Trocker syntax, not standard Compose syntax or an existing Trocker interface.**
 
 ```yaml
@@ -97,17 +109,19 @@ bindings:
 
 files:
   - template: config/development.yaml.tmpl
-    output: .trocker/generated/development.yaml
+    output: development.yaml
 ```
 
 The tool would:
 
-1. Discover the Compose services and ports.
+1. Load the Compose project through the official SDK and validate the explicit endpoint and binding declarations.
 2. Allocate or remap published ports.
 3. Resolve the endpoint references.
-4. Generate a Compose override with explicit environment values.
-5. Render configured files into a generated directory.
-6. Mount those files or pass their paths to the application.
+4. Transform the in-memory Compose project with isolated names, ownership labels, published ports, and explicit environment values.
+5. Render application files only when explicitly configured, and mount them or pass their paths to the application.
+6. Apply the project through the SDK and verify the actual resources and endpoint mappings.
+
+No generated Compose override is required. In `files`, template paths are relative to the manifest; output paths are relative to Trocker's private workspace/runtime generated directory, not the checkout. Applications using only environment bindings need no generated files. The [state design](go-architecture-and-state.md#5-storage-location-and-contents) defines where these optional outputs live.
 
 The example's frontend API binding deliberately uses the frontend's own public origin, assuming that the frontend proxies API requests. A frontend that contacts the API directly would instead bind to `endpoints.api.public.url`. That distinction belongs in project configuration.
 
@@ -128,9 +142,45 @@ Support a few explicit output mechanisms:
 
 Expose endpoint components separately, including `host`, `port`, and `url`, because many applications accept separate database host and port settings rather than a complete connection string. Credentials should remain independently supplied secrets.
 
+### Workspace identity as an application extension point
+
+Expose `TROCKER_WORKSPACE_ID` to every managed service container and to native processes launched through `trocker run`. Make the same value available as `workspace.id` in binding expressions and generated-file templates.
+
+The identity contract is:
+
+- Generate a random UUID once when registering a workspace and persist it in Trocker-managed metadata, not tracked project configuration. Use its lowercase canonical string representation.
+- Keep it stable across repeated initialization, stop/start, rebuilds, port reassignment, and branch switches. A supported worktree move must preserve the registered identity rather than derive a new one from its path.
+- Give independently registered workspaces distinct identities, including workspaces in different repositories or clones. Neither a branch name nor a reusable allocation slot is an identity.
+- Preserve it on `trocker stop` and `trocker down`, including `down --volumes`. Explicitly forgetting a workspace ends that identity's lifecycle; registering a replacement creates a new ID rather than reusing the old one. Missing metadata must not silently authorize adopting existing resources.
+- Treat it as non-secret metadata suitable for names and logs, never as an authentication credential or permission to access a resource.
+- Reserve the variable for Trocker: inject the registered value after secret-provider configuration and reject conflicting explicit project bindings rather than allowing the application-visible ID to diverge from resource ownership.
+
+For example, an application that already accepts a configurable queue name could opt into namespacing through a binding. This is proposed manifest syntax:
+
+```yaml
+bindings:
+  api:
+    environment:
+      DEMO_QUEUE_NAME: "demo-requests-{{ workspace.id }}"
+```
+
+Alternatively, application code can read `TROCKER_WORKSPACE_ID` directly. The application remains responsible for provider naming limits and for making all relevant producers and consumers use the same namespace. Supplying an ID alone does not establish isolation or create the queue.
+
+### External services remain application-owned
+
+Trocker isolates local stacks. External services remain shared unless the application explicitly isolates them.
+
+A shared object-storage bucket may be intentional when object keys are namespaced, while a shared queue may cause worktrees to consume each other's jobs. Trocker cannot infer those semantics from an endpoint or environment variable.
+
+Trocker supplies workspace identity and configuration bindings. The application decides which external resources can be shared and owns their partitioning, provisioning, permissions, and cleanup. Stopping or forgetting a workspace must not delete external resources; applications that use the ID for persistent resources must retain their own cleanup inventory.
+
+The first version should not include an external-resource manifest, cloud provisioning, or inferred rewriting of external resource names. Project-defined lifecycle hooks can be considered later for concrete use cases, without making Trocker responsible for provider-specific semantics.
+
 ## 3. Make discovery helpful, not authoritative
 
-An initialization command could inspect:
+`trocker init` should propose complete endpoint definitions and bindings for user confirmation. `trocker plan` should reject missing required endpoint fields and unknown service references, and report port mismatches against Compose's `ports[].target` and `expose` declarations without silently rewriting the manifest. Compose declarations are configuration evidence, not proof that the application actually listens on a port; startup verification remains necessary.
+
+Initialization could inspect:
 
 - Compose `ports`, `expose`, networks, and `depends_on`.
 - Environment values containing service names or localhost URLs.
@@ -236,7 +286,7 @@ It cannot automatically change a third-party OAuth allowlist. Non-HTTP protocols
 
 ## 6. Proposed first version
 
-Build a **Compose-first CLI**, with native-process support. The following commands are illustrative:
+Build a **daemonless Go CLI backed by the official Compose SDK**, with foreground native-process support. The following commands are illustrative:
 
 ```text
 trocker init                 # discover and propose bindings
@@ -245,39 +295,46 @@ trocker up                   # allocate, render, start, verify
 trocker run web -- pnpm dev  # inject native-process bindings
 trocker endpoints --json     # resolved addresses for tools/agents
 trocker doctor               # unresolved references and unsafe sharing
-trocker down                 # stop; preserve data by default
+trocker start                # start existing stopped containers
+
+trocker stop                 # stop containers without removing them
+trocker down                 # remove containers and networks; keep volumes
+trocker down --volumes       # also remove managed named and attached anonymous volumes
 ```
+
+Lifecycle names and defaults follow Docker Compose. `stop` retains containers for `start`; `down` removes them, so use `up` to recreate the stack. `start` does not apply configuration changes or reassign ports. `down --volumes` (also `-v`) explicitly requests volume deletion, never external-resource cleanup. Workspace identity survives all of these commands. See the [lifecycle contract](go-architecture-and-state.md#compose-compatible-lifecycle-commands) for retention and ownership details.
 
 The internal pipeline would be:
 
 ```text
-Compose discovery
+Compose SDK loading + explicit manifest validation
        ↓
-Workspace identity + endpoint model
+Workspace identity + registry + Docker observations
        ↓
-Port allocation + binding resolution
+Isolation planning + port allocation + binding resolution
        ↓
-Generated Compose/config + native-process environment
+In-memory project + optional application files + native environment
        ↓
-Startup verification + endpoint registry
+SDK execution + inspection + verified endpoint output
 ```
 
 ### Essential safeguards
 
-- Give each workspace a unique project identity incorporating repository and workspace identity, not just branch name.
+- Derive a unique Compose project identity from the persisted workspace ID, not a branch name or reusable port slot. Expose that same ID through `TROCKER_WORKSPACE_ID` and `workspace.id`.
 - Remove or namespace explicit container names.
-- Detect explicitly named or external networks and volumes, shared writable bind mounts, and shared build-image tags. Require a policy for intentional sharing rather than silently mutating external resources.
+- Detect explicitly named or external Docker networks and volumes, shared writable bind mounts, and shared build-image tags. Require a policy for intentional sharing rather than silently mutating resources outside Trocker's ownership. This is Docker resource discovery, not discovery of application-owned cloud resources.
 - Reject unsupported `network_mode: host` isolation rather than pretending port remapping works.
 - Apply generated binding values after secret-provider configuration, with documented precedence. Redact secrets from plans and protect generated files containing sensitive values.
 - Distinguish build-time configuration from runtime configuration. Changing an environment variable cannot update a URL already compiled into frontend JavaScript.
-- Replace Compose port lists rather than append them. A conventional override can leave the original conflicting publication in place. Compose's `!override` supports full replacement and requires Compose 2.24.4 or later.
+- Replace published-port entries in the loaded Compose project rather than appending new ones alongside the original conflicting publications. Apply the transformed model through the SDK; a generated override file is not required.
 - Preserve data by default. Workspace or branch removal should not silently authorize volume deletion.
-- Track resource ownership so cleanup never removes another workspace's resources.
-- Report actual verified endpoints, not merely intended assignments.
+- Label owned Docker resources with the workspace ID and validate ownership before lifecycle operations or route changes. Associate generated configuration and managed native processes with the same identity. Reject stale or mismatched ownership, invalidate generated configuration when forgetting a workspace, and never treat a recycled slot or port as authority over its new owner.
+- Report actual verified endpoints, not merely intended assignments. Docker is authoritative for runtime state; the persistent registry holds workspace identities and allocation metadata, not a duplicate inventory of running resources.
+- Keep `status`, `endpoints`, and `doctor` observational. `stop` does not remove containers; `down` removes containers and managed networks, retaining volumes unless `--volumes` is requested. Both preserve workspace identity.
 
 ### Recommendation
 
-Start with explicit endpoint bindings and generated configuration, plus collision-aware allocation. Add stable HTTP routing next.
+Start with explicit endpoint bindings, in-memory Compose SDK transformations, collision-aware allocation, and a minimal identity/allocation registry. Generate application files only when requested. Add stable HTTP routing later.
 
 The reusable abstraction is not:
 
@@ -291,4 +348,4 @@ It is:
 
 - [Docker Compose networking](https://docs.docker.com/compose/how-tos/networking/): service DNS, container ports versus host ports, and network modes.
 - [Docker Compose ports](https://docs.docker.com/reference/compose-file/services/#ports): automatic host-port allocation and binding configuration.
-- [Docker Compose merge rules](https://docs.docker.com/reference/compose-file/merge/#replace-value): replacing port publications with `!override`.
+- [Docker Compose SDK](https://docs.docker.com/compose/compose-sdk/): loading and managing Compose projects directly from Go.
