@@ -77,8 +77,13 @@ func queryLocation() (string, state.Store, error) {
 	if err != nil {
 		return "", state.Store{}, err
 	}
+	store, err := queryStore()
+	return directory, store, err
+}
+
+func queryStore() (state.Store, error) {
 	stateDirectory, err := state.DefaultDirectory()
-	return directory, state.Store{Directory: stateDirectory}, err
+	return state.Store{Directory: stateDirectory}, err
 }
 
 func writeStatus(out io.Writer, observation lifecycle.Observation) error {

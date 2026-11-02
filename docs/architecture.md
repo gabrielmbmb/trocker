@@ -102,6 +102,7 @@ Existing resources must match both Compose and workspace ownership. Familiar nam
 | `up` | Lock the workspace/target, load and validate, observe ownership, plan and allocate, render selected container files, apply through Compose, verify publications, and remember confirmed mappings. |
 | `start`, `stop`, `down` | Reconstruct existing resources through the SDK, verify ownership, and perform the lifecycle operation without reloading current Compose/manifest files. |
 | `status`, `endpoints` | Query owned resources without changing files or Docker state. Unregistered workspaces fail rather than registering implicitly. |
+| `ls` | Read the registry and live containers for the selected Docker target; list stacks with their worktree paths. Does not load manifests, discover Git, or acquire locks. |
 | `run` | Validate the selected service, observe referenced host endpoints, prepare native bindings/files, then launch the foreground child without holding workspace/registry locks. |
 
 `up SERVICE...` uses Compose's dependency closure. Services referenced by bindings must be selected or declared in `depends_on`; bindings do not invent readiness dependencies. Detached startup waits up to two minutes for Compose running/healthy readiness. Foreground startup streams logs and holds the workspace mutation lock until the session ends.

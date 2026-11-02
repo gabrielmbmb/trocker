@@ -65,6 +65,7 @@ You can manage the stack directly at any time:
 | --- | --- |
 | `trocker up --detach` | Create or update the stack and wait for running/healthy services |
 | `trocker up --detach --build` | Rebuild images and start the stack |
+| `trocker ls` | List running stacks and their worktrees; `--all` includes stopped stacks and worktrees without containers |
 | `trocker status` | Show workspace containers and their state/health |
 | `trocker endpoints` | Show current addresses; add `--json` for machine-readable output |
 | `trocker plan` / `trocker doctor` | Preview changes or check configuration without writes |
@@ -73,6 +74,8 @@ You can manage the stack directly at any time:
 | `trocker down` | Remove workspace containers and networks; retain volumes |
 | `trocker down --volumes` | Also remove managed named and attached anonymous volumes |
 | `trocker help COMMAND` | Show command options |
+
+`trocker ls` works from any directory and reports stacks for the selected Docker target. Add `--all` to include stopped stacks and registered worktrees without containers.
 
 Use `up`, not `start`, to apply configuration changes. Service arguments to `up` select services and their Compose dependencies. Run `trocker up` without `--detach` to follow logs; end that foreground session before another mutating command for the same workspace.
 
