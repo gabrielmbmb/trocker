@@ -1,8 +1,10 @@
 # Trocker
 
-Isolated Docker Compose stacks for each Git worktree.
+Isolated development environments for Git worktrees, powered by Docker Compose.
 
-Run multiple branches of your project side by side without conflicting container names or host ports. Trocker gives each worktree its own stack, managed volumes, and build tags, and connects your applications through explicit endpoint bindings.
+**Worktrees isolate code, not running environments.** Coding agents can work on multiple branches at once, but each needs its own services, ports, and application URLs to test changes independently.
+
+**Trocker gives each worktree its own stack.** Reuse your Compose definitions, declare application bindings, and let Trocker isolate resources, assign ports, and connect your apps—without wiring up every environment by hand.
 
 ## Install
 
