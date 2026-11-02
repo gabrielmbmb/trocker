@@ -1,16 +1,17 @@
 ---
 name: trocker-setup
-description: Prepare a Git checkout to use Trocker. Use when creating or validating trocker.yaml, tracing Docker Compose files through includes, overrides, and extends, declaring endpoints and bindings, or checking setup readiness with trocker init, plan, and doctor.
+description: Prepare a Git checkout to use Trocker. Use when installing the Trocker CLI, creating or validating trocker.yaml, tracing Docker Compose files through includes, overrides, and extends, declaring endpoints and bindings, or checking setup readiness with trocker init, plan, and doctor.
 ---
 
 # Configure Trocker for this project
 
 Turn the current Git worktree into a usable Trocker workspace:
 
-1. Generate `trocker.yaml` with `trocker init` when it is absent.
-2. Read the complete active Compose hierarchy, not just the top-level files.
-3. Add only the endpoints and bindings the project actually needs.
-4. Validate the result with Trocker before handing it back.
+1. Ask before installing the Trocker CLI when `trocker` is not on `PATH`.
+2. Generate `trocker.yaml` with `trocker init` when it is absent.
+3. Read the complete active Compose hierarchy, not just the top-level files.
+4. Add only the endpoints and bindings the project actually needs.
+5. Validate the result with Trocker before handing it back.
 
 `trocker.yaml` is explicit project configuration. Trocker does not infer endpoint schemes or application bindings at runtime, so setup is where those decisions are made.
 
@@ -23,6 +24,7 @@ Turn the current Git worktree into a usable Trocker workspace:
 - Do not bypass `trocker init` confirmation. It intentionally requires a terminal. If no PTY is available, stop and ask the user to run the exact command; do not pipe `y`, hand-write registration state, or edit Trocker's registry.
 - Do not delete or reset Trocker state to clear a registration, ownership, or move error. Preserve it and report the recovery requirement.
 - Keep changes scoped. Do not rewrite an existing valid manifest with a fresh minimal one.
+- Ask before installing Trocker or changing the user's toolchain. Never install it silently.
 
 ## 1. Preflight
 
@@ -30,12 +32,17 @@ From the repository root, confirm:
 
 ```sh
 git rev-parse --show-toplevel
-trocker version
+command -v trocker || echo 'trocker: not installed'
 docker info --format '{{.ServerVersion}} {{.OSType}}'
 ```
 
 - `trocker init` requires a Git checkout and a reachable local Docker target running Linux containers. Docker Desktop is local when published ports reach the host. If the Docker CLI is unavailable, rely on `trocker init`/`trocker plan` for target checks.
-- Use `trocker` from `PATH`. If it is missing, ask for the binary location. Only fall back to `./bin/trocker` when working inside the Trocker source checkout.
+- Use `trocker` from `PATH`. Run `trocker version` once it is available; if it is already installed, report its version and continue without upgrading it.
+- If `trocker` is missing, tell the user it is not installed and ask whether to install it. Before asking, determine the concrete install method and present it explicitly:
+  - With Homebrew: show the exact commands, `brew tap gabrielmbmb/homebrew-tap` and `brew install --cask trocker`.
+  - Without Homebrew: show the latest release URL from <https://github.com/gabrielmbmb/trocker/releases/latest>, the archive name for the current OS and architecture (`trocker_<version>_<os>_<arch>.tar.gz`, or `.zip` on Windows), the matching `trocker_<version>_checksums.txt` verification, and the writable directory already on `PATH` where the binary would be placed. Do not propose `sudo` or system directories.
+- Install only after the user explicitly confirms. If the user declines, stop and ask for the binary location; do not continue with setup. Only fall back to `./bin/trocker` when working inside the Trocker source checkout.
+- After a confirmed install, rerun `trocker version` and report what was installed. If installation fails or no writable `PATH` directory exists, stop and ask the user for the binary location.
 - Inspect `trocker.yaml` if it exists. Also note whether `.env` or the environment sets `COMPOSE_FILE`, `COMPOSE_PROFILES`, or `COMPOSE_PROJECT_NAME`. Do not print their values.
 - Check `git status --short` before editing so unrelated work is preserved.
 
@@ -169,6 +176,7 @@ Report concisely:
 
 ## Completion checklist
 
+- [ ] `trocker` is installed and `trocker version` succeeds.
 - [ ] `trocker.yaml` exists and `version` is `1`.
 - [ ] `compose:` lists the correct top-level files in order; includes/extends are not listed.
 - [ ] Every included/overridden file and active service has been reviewed.
