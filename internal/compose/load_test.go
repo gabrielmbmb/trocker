@@ -29,7 +29,7 @@ func TestContractFixtures(t *testing.T) {
 		{"undeclared-port.yaml", "endpoints.api.port"},
 	} {
 		t.Run(test.file, func(t *testing.T) {
-			path := filepath.Join("..", "..", "docs", "fixtures", "contracts", test.file)
+			path := filepath.Join("testdata", "contracts", test.file)
 			before, err := os.ReadFile(path) //nolint:gosec // Path selects a hardcoded contract fixture.
 			if err != nil {
 				t.Fatal(err)
