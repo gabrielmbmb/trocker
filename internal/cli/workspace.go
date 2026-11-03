@@ -156,6 +156,7 @@ func runPlan(command *cobra.Command, _ []string) error {
 	if command.Name() == "doctor" {
 		message.WriteString("Isolation, binding, and ownership checks passed.\n\n")
 	}
+	mounts := result.WritableMounts()
 	fmt.Fprintf(&message, "Workspace plan\n\n  Workspace  %s\n  Project    %s\n  Networks   %d isolated\n  Volumes    %d retained, isolated\n\n", result.Registration.ID, result.Project.Name, len(result.Project.Networks), len(result.Project.Volumes))
 	for _, name := range result.Project.ServiceNames() {
 		service := result.Project.Services[name]
@@ -163,6 +164,14 @@ func runPlan(command *cobra.Command, _ []string) error {
 		if service.Build != nil {
 			fmt.Fprintf(&message, "    Build tag: %s\n", service.Image)
 		}
+		for _, mount := range mounts {
+			if mount.Service == name {
+				fmt.Fprintf(&message, "    Writable mount: %s -> %s\n", mount.Source, mount.Target)
+			}
+		}
+	}
+	if len(mounts) > 0 {
+		fmt.Fprintf(&message, "\n%d writable mounts; containers can modify these host paths.\n", len(mounts))
 	}
 	if result.ContainerFiles > 0 {
 		fmt.Fprintf(&message, "\n%d container templates checked; rendered content is validated by up.\n", result.ContainerFiles)

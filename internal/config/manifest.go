@@ -13,11 +13,12 @@ import (
 )
 
 type Manifest struct {
-	Version   int                 `yaml:"version"`
-	Compose   []string            `yaml:"compose"`
-	Endpoints map[string]Endpoint `yaml:"endpoints"`
-	Bindings  map[string]Bindings `yaml:"bindings"`
-	Directory string              `yaml:"-"`
+	Version        int                 `yaml:"version"`
+	Compose        []string            `yaml:"compose"`
+	ReadWritePaths []string            `yaml:"read_write_paths"`
+	Endpoints      map[string]Endpoint `yaml:"endpoints"`
+	Bindings       map[string]Bindings `yaml:"bindings"`
+	Directory      string              `yaml:"-"`
 }
 
 type Endpoint struct {
@@ -85,7 +86,48 @@ func Load(path string) (*Manifest, error) {
 		}
 		manifest.Compose[i] = filepath.Clean(path)
 	}
+	if err := manifest.resolveReadWritePaths(); err != nil {
+		return nil, err
+	}
 	return manifest, nil
+}
+
+// resolveReadWritePaths makes declared host paths absolute but never lets them
+// reach outside the checkout. Containment is lexical: a mount source is matched
+// against the declared path, not against the symlinks it may resolve to.
+func (m *Manifest) resolveReadWritePaths() error {
+	for i, path := range m.ReadWritePaths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(m.Directory, path)
+		}
+		path = filepath.Clean(path)
+		if !inside(m.Directory, path) {
+			return invalid(fmt.Sprintf("read_write_paths[%d]", i), "expected a path inside the manifest directory")
+		}
+		m.ReadWritePaths[i] = path
+	}
+	return nil
+}
+
+// Inside reports whether path is the manifest directory or below it.
+func (m *Manifest) Inside(path string) bool { return inside(m.Directory, path) }
+
+// AllowsWrite reports whether a bind mount source may be mounted writable.
+// Callers must pass a clean absolute path, which Compose produces.
+func (m *Manifest) AllowsWrite(source string) bool {
+	for _, path := range m.ReadWritePaths {
+		if inside(path, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// inside reports whether path is root or a descendant of root. Rel compares
+// path components, so a sibling sharing a name prefix is not contained.
+func inside(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // Parse delegates YAML structure and type conversion to the library, then
@@ -117,6 +159,11 @@ func (m *Manifest) Validate() error {
 	for i, path := range m.Compose {
 		if strings.TrimSpace(path) == "" {
 			return invalid(fmt.Sprintf("compose[%d]", i), "expected a nonempty file path")
+		}
+	}
+	for i, path := range m.ReadWritePaths {
+		if strings.TrimSpace(path) == "" {
+			return invalid(fmt.Sprintf("read_write_paths[%d]", i), "expected a nonempty host path")
 		}
 	}
 	for name, endpoint := range m.Endpoints {

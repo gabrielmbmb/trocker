@@ -27,6 +27,26 @@ type PlanResult struct {
 	ContainerFiles int
 }
 
+// WritableMount is a bind mount that lets containers modify a host path.
+type WritableMount struct {
+	Service string
+	Source  string
+	Target  string
+}
+
+// WritableMounts lists declared writable bind mounts in service order.
+func (r PlanResult) WritableMounts() []WritableMount {
+	var mounts []WritableMount
+	for _, name := range r.Project.ServiceNames() {
+		for _, mount := range r.Project.Services[name].Volumes {
+			if mount.Type == types.VolumeTypeBind && !mount.ReadOnly {
+				mounts = append(mounts, WritableMount{Service: name, Source: mount.Source, Target: mount.Target})
+			}
+		}
+	}
+	return mounts
+}
+
 func preparePlan(ctx context.Context, directory string, store state.Store, services []string) (PlanResult, error) {
 	registration, err := registeredWorkspace(ctx, directory, store)
 	if err != nil {

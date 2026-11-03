@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -34,7 +35,7 @@ func Build(manifest *config.Manifest, source *types.Project, registration worksp
 		return nil, fmt.Errorf("selected service is not active in the Compose project")
 	}
 	project, err := selected.WithServicesTransform(func(name string, service types.ServiceConfig) (types.ServiceConfig, error) {
-		if err := isolateService(&service, registration); err != nil {
+		if err := isolateService(&service, registration, manifest); err != nil {
 			return service, fmt.Errorf("service %s: %w", name, err)
 		}
 		if err := bindEnvironment(&service, manifest, selected, registration.ID, options); err != nil {
@@ -142,7 +143,7 @@ func publishEndpoints(service *types.ServiceConfig, endpoints map[string]config.
 	slices.SortFunc(service.Ports, func(a, b types.ServicePortConfig) int { return cmp.Compare(a.Target, b.Target) })
 }
 
-func isolateService(service *types.ServiceConfig, registration workspace.Registration) error {
+func isolateService(service *types.ServiceConfig, registration workspace.Registration, manifest *config.Manifest) error {
 	if service.NetworkMode != "" {
 		return fmt.Errorf("network_mode is not supported; use Compose bridge networks")
 	}
@@ -152,8 +153,8 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	for _, mount := range service.Volumes {
 		switch mount.Type {
 		case types.VolumeTypeBind:
-			if !mount.ReadOnly {
-				return fmt.Errorf("writable bind mounts require an explicit sharing policy")
+			if !mount.ReadOnly && !manifest.AllowsWrite(filepath.Clean(mount.Source)) {
+				return newWriteError(manifest, filepath.Clean(mount.Source))
 			}
 		case types.VolumeTypeVolume:
 			if mount.Source == "" {
@@ -199,6 +200,31 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	}
 	service.Ports = ports
 	return nil
+}
+
+// writeError rejects a writable bind mount that no declared path allows.
+// Host paths are user input and plans print them, so they are safe to report.
+type writeError struct {
+	source  string
+	outside bool
+}
+
+func newWriteError(manifest *config.Manifest, source string) error {
+	return &writeError{source: source, outside: !manifest.Inside(source)}
+}
+
+func (e *writeError) Error() string {
+	if e.outside {
+		return "writable bind mount " + e.source + " is outside the checkout"
+	}
+	return "writable bind mount " + e.source + " is not declared in read_write_paths"
+}
+
+func (e *writeError) Help() string {
+	if e.outside {
+		return "only paths inside the checkout can be writable; remove the mount if it must stay outside"
+	}
+	return "add the path under read_write_paths in trocker.yaml, or mount it read-only"
 }
 
 func checkLabels(labels types.Labels, id string) error {

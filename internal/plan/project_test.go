@@ -2,10 +2,13 @@ package plan_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/compose-spec/compose-go/v2/types"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/config"
@@ -15,20 +18,25 @@ import (
 
 func fixture(t *testing.T, content string) (*config.Manifest, string) {
 	t.Helper()
-	directory := t.TempDir()
-	path := filepath.Join(directory, "compose.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	manifestPath := filepath.Join(directory, "trocker.yaml")
-	if err := os.WriteFile(manifestPath, []byte("version: 1\ncompose: [compose.yaml]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := config.Load(manifestPath)
+	path := fixtureWith(t, content, "version: 1\ncompose: [compose.yaml]\n")
+	manifest, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return manifest, manifestPath
+	return manifest, path
+}
+
+func fixtureWith(t *testing.T, composeContent, manifestContent string) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "compose.yaml"), []byte(composeContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(directory, "trocker.yaml")
+	if err := os.WriteFile(manifestPath, []byte(manifestContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return manifestPath
 }
 
 func TestPlanIsIsolatedAndDoesNotMutateInputs(t *testing.T) {
@@ -104,6 +112,81 @@ volumes:
 	}
 	if other.Volumes["data"].Name == project.Volumes["data"].Name || other.Services["web"].Image == project.Services["web"].Image {
 		t.Fatal("workspaces share managed names")
+	}
+}
+
+func TestWritableMountsRequireDeclaredPaths(t *testing.T) {
+	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
+	withPaths := func(paths string) string {
+		return "version: 1\ncompose: [compose.yaml]\nread_write_paths: [" + paths + "]\n"
+	}
+	const undeclared = "version: 1\ncompose: [compose.yaml]\n"
+	for _, test := range []struct {
+		name     string
+		compose  string
+		manifest string
+		readOnly bool
+		problem  string
+	}{
+		{
+			name:     "declared path",
+			compose:  "services: {api: {image: busybox, volumes: ['./src:/app']}}",
+			manifest: withPaths("./src"),
+		},
+		{
+			name:     "nested under declared path",
+			compose:  "services: {api: {image: busybox, volumes: ['./src/pkg:/app']}}",
+			manifest: withPaths("./src"),
+		},
+		{
+			name:     "sibling prefix",
+			compose:  "services: {api: {image: busybox, volumes: ['./src-cache:/cache']}}",
+			manifest: withPaths("./src"),
+			problem:  "not declared in read_write_paths",
+		},
+		{
+			name:     "undeclared path",
+			compose:  "services: {api: {image: busybox, volumes: ['./src:/app']}}",
+			manifest: undeclared,
+			problem:  "not declared in read_write_paths",
+		},
+		{
+			name:     "outside checkout",
+			compose:  "services: {api: {image: busybox, volumes: ['../outside:/app']}}",
+			manifest: withPaths("."),
+			problem:  "outside the checkout",
+		},
+		{
+			name:     "read-only needs no declaration",
+			compose:  "services: {api: {image: busybox, volumes: ['./src:/app:ro']}}",
+			manifest: undeclared,
+			readOnly: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := plan.Build(manifest, source, registration, plan.Options{})
+			if test.problem != "" {
+				var help interface{ Help() string }
+				if err == nil || !strings.Contains(err.Error(), test.problem) {
+					t.Fatalf("error = %v, want %q", err, test.problem)
+				}
+				if !errors.As(err, &help) || help.Help() == "" {
+					t.Fatalf("error has no recovery guidance: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			volumes := project.Services["api"].Volumes
+			if len(volumes) != 1 || volumes[0].Type != types.VolumeTypeBind || volumes[0].ReadOnly != test.readOnly {
+				t.Fatalf("bind mount was not preserved: %#v", volumes)
+			}
+		})
 	}
 }
 

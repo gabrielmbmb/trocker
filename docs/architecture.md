@@ -89,7 +89,9 @@ The supported target is a local Docker daemon running Linux containers, includin
 
 The planner assigns workspace-scoped resource names and build tags, removes `container_name`, replaces host publications, applies bindings, and publishes explicitly declared endpoints that use only `expose`. Container ports remain unchanged.
 
-Unsupported configurations fail before mutation rather than silently sharing resources. These include remote targets, UDP/IPv6 publications, nonstandard network modes, external or explicitly named networks/volumes, writable bind mounts, custom networking drivers/addressing, explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged/device/namespace access, user-declared secrets/configs/models, and advanced build access/tags. Read-only bind mounts and managed named volumes are supported. Built service names must be lowercase.
+Unsupported configurations fail before mutation rather than silently sharing resources. These include remote targets, UDP/IPv6 publications, nonstandard network modes, external or explicitly named networks/volumes, custom networking drivers/addressing, explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged/device/namespace access, user-declared secrets/configs/models, and advanced build access/tags. Read-only bind mounts and managed named volumes are supported. Built service names must be lowercase.
+
+Writable bind mounts are allowed only for host paths declared under `read_write_paths` in the manifest. Each path resolves against the manifest directory and must stay inside it, so a declaration cannot expose the rest of the filesystem; the check is lexical and does not follow symlinks. A mount source is matched against the declared path by components, so a sibling with a shared name prefix is not covered. `plan` reports every writable mount before mutation, and an undeclared mount fails with recovery guidance instead of a generic policy message.
 
 Existing resources must match both Compose and workspace ownership. Familiar names, ports, or missing labels never authorize adoption or deletion. Ownership checks include networks and volumes even though `status` currently lists only containers. Isolation does not partition external databases, queues, buckets, browser cookies, or cloud resources; applications own those concerns.
 
@@ -163,7 +165,7 @@ Target and service keys use identity-derived hashes to avoid unsafe path compone
 
 Confined `os.Root` operations, private staging, and atomic publication prevent path escapes and partially selectable generations. Identical current output reuses its generation; changed bytes select a new immutable snapshot. Existing consumers keep their original files. Only comparison/publication holds the consumer lock; no lock spans native execution.
 
-Directories are `0700`; metadata and native files are `0600`. Container files are `0444` within private directories and individually delivered through Compose file-backed configs as read-only bind mounts. The daemon must be able to access the private tree. All UIDs in the receiving container can read the file; this is not per-user secret isolation inside a container. No host directory is made public or mounted wholesale.
+Directories are `0700`; metadata and native files are `0600`. Container files are `0444` within private directories and individually delivered through Compose file-backed configs as read-only bind mounts. The daemon must be able to access the private tree. All UIDs in the receiving container can read the file; this is not per-user secret isolation inside a container. No host directory is made public or mounted wholesale by generated-file delivery.
 
 Compose config reference names include opaque generation IDs. Changed content changes the reference and lets Compose's normal service hashing recreate the consumer; unchanged content does not. No custom copy/mount orchestrator or public content digest is needed.
 

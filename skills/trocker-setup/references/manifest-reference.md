@@ -8,11 +8,12 @@
 version: 1
 compose:
   - compose.yaml
+read_write_paths: []
 endpoints: {}
 bindings: {}
 ```
 
-`endpoints` and `bindings` are optional. Empty mappings are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`read_write_paths`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -52,6 +53,24 @@ Required, nonempty, ordered list of nonempty file paths.
 - Scalar shorthand is not supported; use a YAML list.
 
 The Compose project name comes from Trocker's workspace identity. Do not try to set or preserve a Compose `name` through this field.
+
+### `read_write_paths`
+
+Optional list of host paths that containers may modify through writable bind mounts. Read-only bind mounts need no declaration.
+
+```yaml
+read_write_paths:
+  - .
+  - packages/api
+```
+
+- Each entry is nonempty. Relative paths resolve against the directory containing `trocker.yaml`; the resolved path must be that directory or inside it.
+- A writable bind mount is accepted when its source equals a declared path or is nested under it. Siblings that merely share a name prefix are not covered.
+- Containment is lexical. Trocker does not follow symlinks, so do not route a mount source through a link that leaves the checkout.
+- Undeclared writable mounts fail before mutation, naming the path to declare.
+- `plan` and `doctor` list every writable mount, because containers can modify those host paths once `up` runs.
+
+External host paths, such as a Docker socket or a home-directory cache, cannot be declared here. They are separate unsupported features.
 
 ### `endpoints`
 
@@ -185,7 +204,7 @@ Rejected by the isolation planner or loader checks:
 - UDP publications. Only TCP publications are supported.
 - `network_mode` (including host networking), custom network drivers, external or explicitly named networks, custom network addressing, and driver/IPAM options.
 - External volumes, custom volume drivers/options, and explicitly named volumes.
-- Anonymous service volumes and writable bind mounts. Read-only bind mounts are supported.
+- Anonymous service volumes and writable bind mounts that `read_write_paths` does not declare. Read-only bind mounts are supported.
 - Replicated services (`scale` other than 1) and deploy/replication settings.
 - Compose `secrets`, `configs`, and `models`.
 - Privileged services, devices, device cgroup rules, added capabilities, PID/IPC/UTS/cgroup namespaces, socket use, `volumes_from`, and `external_links`.

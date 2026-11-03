@@ -207,6 +207,50 @@ func TestLoadResolvesPathsWithoutChangingFiles(t *testing.T) {
 	}
 }
 
+func TestLoadConfinesReadWritePathsToManifestDirectory(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	for _, test := range []struct {
+		name  string
+		path  string
+		valid bool
+	}{
+		{"directory", ".", true},
+		{"absolute inside", filepath.Join(directory, "packages"), true},
+		{"parent", "..", false},
+		{"absolute outside", filepath.Dir(directory), false},
+		{"empty path", "''", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			manifestPath := filepath.Join(directory, test.name+".yaml")
+			content := "version: 1\ncompose: [compose.yaml]\nread_write_paths:\n  - " + test.path + "\n"
+			if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := config.Load(manifestPath)
+			if (err == nil) != test.valid {
+				t.Fatalf("valid = %v, error = %v", test.valid, err)
+			}
+			if err != nil {
+				var validation *config.Error
+				if !errors.As(err, &validation) || !strings.HasPrefix(validation.Field, "read_write_paths") {
+					t.Fatalf("error = %v, want read_write_paths field", err)
+				}
+				return
+			}
+			want := test.path
+			if !filepath.IsAbs(want) {
+				want = filepath.Join(directory, want)
+			}
+			want = filepath.Clean(want)
+			if manifest.ReadWritePaths[0] != want {
+				t.Fatalf("writable path = %s, want %s", manifest.ReadWritePaths[0], want)
+			}
+		})
+	}
+}
+
 func TestBindingErrorsDoNotExposeValues(t *testing.T) {
 	t.Parallel()
 	for _, native := range []bool{false, true} {
