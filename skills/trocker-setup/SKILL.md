@@ -1,6 +1,6 @@
 ---
 name: trocker-setup
-description: Prepare a Git checkout to use Trocker. Use when installing the Trocker CLI, creating or validating trocker.yaml, tracing Docker Compose files through includes, overrides, and extends, declaring endpoints, bindings, writable host paths, and Docker socket access, or checking setup readiness with trocker init, plan, and doctor.
+description: Prepare a Git checkout to use Trocker. Use when installing the Trocker CLI, creating or validating trocker.yaml, tracing Docker Compose files through includes, overrides, and extends, declaring endpoints, bindings, writable host paths, Docker socket access, and host namespace/capability/device access, or checking setup readiness with trocker init, plan, and doctor.
 ---
 
 # Configure Trocker for this project
@@ -10,7 +10,7 @@ Turn the current Git worktree into a usable Trocker workspace:
 1. Ask before installing the Trocker CLI when `trocker` is not on `PATH`.
 2. Generate `trocker.yaml` with `trocker init` when it is absent.
 3. Read the complete active Compose hierarchy, not just the top-level files.
-4. Add only the endpoints, bindings, writable host paths, and Docker socket services the project actually needs.
+4. Add only the endpoints, bindings, writable host paths, and host-level access the project actually needs.
 5. Validate the result with Trocker before handing it back.
 
 `trocker.yaml` is explicit project configuration. Trocker does not infer endpoint schemes or application bindings at runtime, so setup is where those decisions are made.
@@ -21,6 +21,7 @@ Turn the current Git worktree into a usable Trocker workspace:
 - Never edit Compose files, Dockerfiles, application code, `.env`, or unrelated configuration just to make Trocker accept the project. Report unsupported Compose features instead.
 - Never add a `read_write_paths` entry without explicit confirmation. Each entry lets containers modify that path on the host, so show the service, host path, and container path before asking.
 - Never add a service to `docker_socket_services` without explicit confirmation. It grants control of the Docker daemon, including containers and images outside this workspace, so show the service and socket path before asking.
+- Never add a `host_access` grant without explicit confirmation. It exposes host process state, host capabilities, or devices and is not workspace-isolated. Show the exact Compose declaration and matching grant before asking.
 - Never print `.env` values, Compose environment values, secrets, generated files, or full resolved Compose configuration. List keys or use targeted queries only.
 - Do not run `trocker up`, `start`, `stop`, `down`, or `run` unless the user explicitly asks for a runtime test. `init`, `plan`, and `doctor` are the normal setup checks.
 - Do not bypass `trocker init` confirmation. It intentionally requires a terminal. If no PTY is available, stop and ask the user to run the exact command; do not pipe `y`, hand-write registration state, or edit Trocker's registry.
@@ -56,7 +57,7 @@ If `trocker.yaml` is absent:
 trocker init
 ```
 
-Run it in a real terminal or PTY. The user must see the proposal and confirm it. The generated manifest contains only the SDK-selected top-level Compose files; empty `read_write_paths: []`, `docker_socket_services: []`, `endpoints: {}`, and `bindings: {}` are expected at this stage.
+Run it in a real terminal or PTY. The user must see the proposal and confirm it. The generated manifest contains only the SDK-selected top-level Compose files; empty `read_write_paths: []`, `docker_socket_services: []`, `host_access: {}`, `endpoints: {}`, and `bindings: {}` are expected at this stage.
 
 - If init cannot find a Compose file, do not hand-write `trocker.yaml`. First locate the intended top-level file(s) using [Compose analysis](references/compose-analysis.md), then rerun init with an explicit selection, for example:
   ```sh
@@ -79,12 +80,12 @@ Read [Compose analysis](references/compose-analysis.md) before deciding what bel
   - explicit top-level overrides selected by `COMPOSE_FILE` or SDK defaults.
 - Resolve paths with Compose semantics relative to the active Compose project directory. Trocker uses the manifest directory as the project working directory, so a top-level file in `deploy/` resolves `include` and `extends.file` from the repository root, not from `deploy/`. An included file's own includes default to that included file's directory (or its declared `project_directory`). Account for the `project_directory` and `env_file` options when present.
 - Determine which services are actually active. Profile-gated services must be active through the environment when Trocker is used; there is no profile flag in `trocker.yaml`.
-- Build an inventory of services, declared container ports (`ports[].target` and `expose`), profiles, networks, volumes, bind mounts (writable or read-only, including Docker socket mounts), and unsupported features.
+- Build an inventory of services, declared container ports (`ports[].target` and `expose`), profiles, networks, volumes, bind mounts (writable or read-only, including Docker socket mounts), `pid`, `ipc`, `cap_add`, `devices`, and unsupported features.
 - Distinguish top-level files from included files. If init proposed the wrong ones, decline, correct the selection, and retry.
 
 Do not flatten included files into `trocker.yaml`. The Compose SDK resolves and merges the hierarchy for each command.
 
-## 4. Declare writable host paths and Docker socket access
+## 4. Declare writable host paths and host-level access
 
 A bind mount is writable unless the mount declares `:ro` (short syntax) or `read_only: true` (long syntax). Trocker rejects any writable bind mount whose host source is not declared under `read_write_paths`, because that mount lets a container modify files in the checkout.
 
@@ -122,6 +123,31 @@ docker_socket_services:
 - Access is host-level and not limited to this workspace. It does not make the project safe to share with untrusted images.
 
 The full contract is in [the manifest reference](references/manifest-reference.md#docker_socket_services).
+
+### Host namespaces, capabilities, and devices
+
+Trocker rejects `pid: host`, `ipc: host`, `cap_add`, and `devices` unless the service has a matching `host_access` grant. Metrics and logging agents commonly need `pid: host`; capabilities and devices should be granted only for a concrete requirement.
+
+```yaml
+host_access:
+  datadog-agent:
+    pid: true
+    ipc: true
+    capabilities: [SYS_PTRACE]
+    devices:
+      - source: /dev/kmsg
+        permissions: rw
+```
+
+- `pid: true` authorizes `pid: host`; `ipc: true` authorizes `ipc: host`. `ipc: private` needs no grant.
+- Other `pid` and `ipc` modes, such as `pid: service:...` or `ipc: shareable`, remain unsupported. Report them as blockers.
+- `capabilities` authorizes Compose `cap_add` entries. Declare exact names, never `ALL`; a `CAP_` prefix is ignored.
+- `devices` authorizes a device source and exact permissions (`r`, `w`, `m`). Every manifest device entry must state permissions explicitly; match the Compose declaration, and use `rwm` when Compose omits them.
+- `privileged`, `device_cgroup_rules`, `uts: host`, and `cgroup: host` remain unsupported.
+- Do not add a grant merely because Compose has the field. Ask for the exact service and grant, as with `read_write_paths`.
+- `trocker plan` reports actual access under `Host access` and warns that it is not workspace-isolated.
+
+The full contract is in [the manifest reference](references/manifest-reference.md#host_access).
 
 ## 5. Declare endpoints
 
@@ -188,8 +214,8 @@ Then validate in this order:
    trocker doctor
    trocker plan
    ```
-   `doctor` and `plan` share the same isolation, binding, and ownership checks. `plan` also shows the workspace/project name, isolated resources, selected services, writable mounts, Docker API access, and ports that need coordination.
-3. Fix only `trocker.yaml` when validation reports a manifest problem. If validation reports an unregistered workspace or a target that is not associated, run `trocker init` and confirm. If it reports an undeclared writable bind mount, return to step 4 and confirm the path with the user; report it as a blocker when the source is outside the checkout. If it reports Docker socket access, return to the Docker socket subsection in step 4 and confirm the service with the user. If it reports an ambiguous move, a missing marker, a foreign resource, or an unsupported Compose feature, stop and report the exact blocker. Do not work around it by deleting state or rewriting Compose.
+   `doctor` and `plan` share the same isolation, binding, and ownership checks. `plan` also shows the workspace/project name, isolated resources, selected services, writable mounts, Docker API access, host access, and ports that need coordination.
+3. Fix only `trocker.yaml` when validation reports a manifest problem. If validation reports an unregistered workspace or a target that is not associated, run `trocker init` and confirm. If it reports an undeclared writable bind mount, return to step 4 and confirm the path with the user; report it as a blocker when the source is outside the checkout. If it reports Docker socket access or host access, return to the corresponding subsection in step 4 and confirm the service and grant with the user. If it reports an ambiguous move, a missing marker, a foreign resource, or an unsupported Compose feature, stop and report the exact blocker. Do not work around it by deleting state or rewriting Compose.
 4. Re-run `trocker doctor` and `trocker plan` until both pass.
 
 Do not claim the project is ready if either check could not run because Docker was unreachable, registration was missing, or confirmation was unavailable.
@@ -210,7 +236,7 @@ This may build or pull images and create containers. Verify the expected endpoin
 Report concisely:
 
 - the Compose hierarchy and which files are top-level in the manifest;
-- endpoints, bindings, writable host paths, and Docker socket services added, with the reason for each;
+- endpoints, bindings, writable host paths, Docker socket services, and host access grants added, with the reason for each;
 - the result of `trocker init`, `trocker doctor`, and `trocker plan`;
 - any assumptions, omitted ambiguous bindings, or blockers;
 - the next command the user should run, normally `trocker up --detach`.
@@ -225,6 +251,7 @@ Report concisely:
 - [ ] Every binding matches a real runtime consumer and a supported address reference.
 - [ ] Every writable bind mount is declared in `read_write_paths` after user confirmation, or is a Docker socket handled through `docker_socket_services`, or is reported as a blocker.
 - [ ] Every service with Docker API access is declared in `docker_socket_services` after user confirmation.
+- [ ] Every host PID/IPC, capability, and device grant is declared in `host_access` after user confirmation.
 - [ ] No unsupported Compose feature is being silently ignored.
 - [ ] `trocker init` registration is complete if this workspace was new.
 - [ ] `trocker doctor` passes.

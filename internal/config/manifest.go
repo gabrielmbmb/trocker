@@ -14,13 +14,14 @@ import (
 )
 
 type Manifest struct {
-	Version              int                 `yaml:"version"`
-	Compose              []string            `yaml:"compose"`
-	ReadWritePaths       []string            `yaml:"read_write_paths"`
-	DockerSocketServices []string            `yaml:"docker_socket_services"`
-	Endpoints            map[string]Endpoint `yaml:"endpoints"`
-	Bindings             map[string]Bindings `yaml:"bindings"`
-	Directory            string              `yaml:"-"`
+	Version              int                        `yaml:"version"`
+	Compose              []string                   `yaml:"compose"`
+	ReadWritePaths       []string                   `yaml:"read_write_paths"`
+	DockerSocketServices []string                   `yaml:"docker_socket_services"`
+	HostAccess           map[string]HostAccessGrant `yaml:"host_access"`
+	Endpoints            map[string]Endpoint        `yaml:"endpoints"`
+	Bindings             map[string]Bindings        `yaml:"bindings"`
+	Directory            string                     `yaml:"-"`
 }
 
 type Endpoint struct {
@@ -182,6 +183,9 @@ func (m *Manifest) Validate() error {
 			return invalid("docker_socket_services", "duplicate service "+service)
 		}
 		seen[service] = true
+	}
+	if err := m.validateHostAccess(); err != nil {
+		return err
 	}
 	for name, endpoint := range m.Endpoints {
 		if !aliasPattern.MatchString(name) {

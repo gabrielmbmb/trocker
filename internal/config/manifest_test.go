@@ -48,6 +48,17 @@ func TestManifestValidation(t *testing.T) {
 		{"empty docker socket service", base + "docker_socket_services: ['']", "docker_socket_services[0]"},
 		{"duplicate docker socket service", base + "docker_socket_services: [api, api]", "docker_socket_services"},
 		{"scalar docker socket services", base + "docker_socket_services: api", "manifest"},
+		{"empty host access service", base + "host_access: {'': {pid: true}}", "host_access"},
+		{"empty host access grant", base + "host_access: {api: {}}", "host_access.api"},
+		{"unknown host access field", base + "host_access: {api: {secret: do-not-print}}", "manifest"},
+		{"host access is not a mapping", base + "host_access: [api]", "manifest"},
+		{"empty capability", base + "host_access: {api: {capabilities: ['']}}", "host_access.api.capabilities[0]"},
+		{"all capability", base + "host_access: {api: {capabilities: [ALL]}}", "host_access.api.capabilities[0]"},
+		{"duplicate capability", base + "host_access: {api: {capabilities: [SYS_PTRACE, CAP_SYS_PTRACE]}}", "host_access.api.capabilities"},
+		{"empty device source", base + "host_access: {api: {devices: [{source: '', permissions: rw}]}}", "host_access.api.devices[0].source"},
+		{"missing device permissions", base + "host_access: {api: {devices: [{source: /dev/kmsg, permissions: ''}]}}", "host_access.api.devices[0].permissions"},
+		{"invalid device permissions", base + "host_access: {api: {devices: [{source: /dev/kmsg, permissions: rwx}]}}", "host_access.api.devices[0].permissions"},
+		{"duplicate device", base + "host_access: {api: {devices: [{source: /dev/kmsg, permissions: rw}, {source: /dev/kmsg, permissions: rwm}]}}", "host_access.api.devices"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -72,6 +83,14 @@ func TestParsePreservesExplicitConfiguration(t *testing.T) {
 version: 1
 compose: [base.yaml, override.yaml]
 docker_socket_services: [localstack, dozzle]
+host_access:
+  datadog-agent:
+    pid: true
+    ipc: true
+    capabilities: [SYS_PTRACE]
+    devices:
+      - source: /dev/kmsg
+        permissions: rw
 endpoints:
   api:
     service: backend
@@ -93,7 +112,11 @@ bindings:
 		Version:              1,
 		Compose:              []string{"base.yaml", "override.yaml"},
 		DockerSocketServices: []string{"localstack", "dozzle"},
-		Endpoints:            map[string]config.Endpoint{"api": {Service: "backend", Port: 8000, Scheme: "https"}},
+		HostAccess: map[string]config.HostAccessGrant{"datadog-agent": {
+			PID: true, IPC: true, Capabilities: []string{"SYS_PTRACE"},
+			Devices: []config.HostDevice{{Source: "/dev/kmsg", Permissions: "rw"}},
+		}},
+		Endpoints: map[string]config.Endpoint{"api": {Service: "backend", Port: 8000, Scheme: "https"}},
 		Bindings: map[string]config.Bindings{"web": {
 			Environment: map[string]string{"URL": "{{ endpoints.api.container.url }}", "EMPTY": ""},
 			Native:      config.NativeBindings{Environment: map[string]string{"URL": "{{ endpoints.api.host.url }}"}},

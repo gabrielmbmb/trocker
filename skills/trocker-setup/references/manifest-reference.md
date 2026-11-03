@@ -10,11 +10,12 @@ compose:
   - compose.yaml
 read_write_paths: []
 docker_socket_services: []
+host_access: {}
 endpoints: {}
 bindings: {}
 ```
 
-`read_write_paths`, `docker_socket_services`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`read_write_paths`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -89,6 +90,31 @@ docker_socket_services:
 - Docker API access is host-level: the service can control the daemon and resources outside this workspace. Add entries only after confirming the need.
 
 External host paths other than Docker sockets still cannot be declared.
+
+### `host_access`
+
+Optional mapping from active Compose service name to host-level access grants.
+
+```yaml
+host_access:
+  datadog-agent:
+    pid: true
+    ipc: true
+    capabilities:
+      - SYS_PTRACE
+    devices:
+      - source: /dev/kmsg
+        permissions: rw
+```
+
+- Each grant must contain at least one of `pid`, `ipc`, `capabilities`, or `devices`.
+- `pid: true` permits `pid: host`. Other `pid` modes are unsupported.
+- `ipc: true` permits `ipc: host`. `ipc: private` is allowed without a grant; other IPC modes are unsupported.
+- `capabilities` is a case-insensitive allow-list for Compose `cap_add`; a `CAP_` prefix is ignored. `ALL` is rejected; list individual capabilities.
+- `devices` matches a Compose device by source and exact permissions. Permissions use `r`, `w`, and `m`; order does not matter. The manifest entry must state permissions explicitly; approving a Compose device that omits them requires `rwm`. The container target is not part of the grant. Matching is lexical; symlinks are not resolved.
+- Empty grants, empty capability names, invalid permissions, duplicate capabilities/devices, and unknown or inactive services are rejected.
+- `privileged`, `device_cgroup_rules`, `uts`, `cgroup`, and other host namespace modes remain unsupported.
+- `plan` and `doctor` report each active grant. Host access is not workspace-isolated.
 
 ### `endpoints`
 
@@ -225,7 +251,8 @@ Rejected by the isolation planner or loader checks:
 - Anonymous service volumes and writable bind mounts that `read_write_paths` does not declare. Read-only bind mounts are supported.
 - Replicated services (`scale` other than 1) and deploy/replication settings.
 - Compose `secrets`, `configs`, and `models`.
-- Privileged services, devices, device cgroup rules, added capabilities, PID/IPC/UTS/cgroup namespaces, `volumes_from`, and `external_links`.
+- Privileged services, device cgroup rules, UTS/cgroup namespaces, `volumes_from`, and `external_links`.
+- Host PID/IPC, capabilities, and devices not declared in `host_access`.
 - Docker socket access not declared in `docker_socket_services`, whether through a bind mount or Compose `use_api_socket`.
 - Pre/post-start/stop hooks, providers, `develop`, and jobs.
 - Advanced build access: build tags, network, privileged mode, entitlements, SSH, secrets, and additional contexts.

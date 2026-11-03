@@ -10,6 +10,11 @@ func (m *Manifest) ValidateProject(project *types.Project) error {
 			return invalid("docker_socket_services", "service "+service+" is missing or inactive")
 		}
 	}
+	for service := range m.HostAccess {
+		if _, exists := project.Services[service]; !exists {
+			return invalid("host_access", "service "+service+" is missing or inactive")
+		}
+	}
 	for name, endpoint := range m.Endpoints {
 		service, exists := project.Services[endpoint.Service]
 		if !exists {

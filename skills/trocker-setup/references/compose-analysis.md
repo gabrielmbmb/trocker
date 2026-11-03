@@ -127,6 +127,7 @@ For every active service, record:
 - networks and shared-network relationships;
 - named/anonymous volumes and bind mounts, noting whether each bind mount is writable: short syntax without `:ro`, or long syntax with `read_only` false or absent;
 - whether a bind mount is a Docker socket or a directory containing one, for `docker_socket_services`;
+- `pid`, `ipc`, `cap_add`, and `devices`, for `host_access`;
 - `depends_on`, health checks, and profile membership;
 - environment keys (never values) that look like service addresses;
 - unsupported fields listed in [the manifest reference](manifest-reference.md#unsupported-compose-features).
@@ -213,3 +214,5 @@ The `compose:` list stays at the top-level files. The endpoint and binding decis
 Add `read_write_paths` only for writable bind mount sources the user approved; read-only mounts need no entry. The path list, containment rules, and outside-the-checkout blocker are in [the manifest reference](manifest-reference.md#read_write_paths).
 
 Add `docker_socket_services` only for services the user approved for Docker API access. Socket paths are not `read_write_paths` entries. The contract is in [the manifest reference](manifest-reference.md#docker_socket_services).
+
+Add `host_access` only for the exact host namespaces, capabilities, and devices the user approved. The contract is in [the manifest reference](manifest-reference.md#host_access).

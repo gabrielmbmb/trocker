@@ -109,6 +109,45 @@ func TestValidateProjectDockerSocketServicesRequireActiveService(t *testing.T) {
 	}
 }
 
+func TestValidateProjectHostAccessRequiresActiveService(t *testing.T) {
+	t.Parallel()
+	project := func() *types.Project {
+		return &types.Project{
+			Services:         types.Services{"datadog-agent": {Name: "datadog-agent"}},
+			DisabledServices: types.Services{"agent": {Name: "agent"}},
+		}
+	}
+	for _, test := range []struct {
+		name    string
+		service string
+		valid   bool
+	}{
+		{name: "active service", service: "datadog-agent", valid: true},
+		{name: "inactive service", service: "agent"},
+		{name: "missing service", service: "missing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			actual, before := project(), project()
+			manifest := config.Manifest{HostAccess: map[string]config.HostAccessGrant{test.service: {PID: true}}}
+			err := manifest.ValidateProject(actual)
+			if !reflect.DeepEqual(actual, before) {
+				t.Fatal("validation changed the Compose project")
+			}
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var validation *config.Error
+			if !errors.As(err, &validation) || validation.Field != "host_access" {
+				t.Fatalf("error = %v, want missing/inactive host access service", err)
+			}
+		})
+	}
+}
+
 func TestValidateProjectBindingsRequireActiveServiceWithoutEndpoints(t *testing.T) {
 	t.Parallel()
 	project := &types.Project{

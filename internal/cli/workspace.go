@@ -158,6 +158,7 @@ func runPlan(command *cobra.Command, _ []string) error {
 	}
 	mounts := result.WritableMounts()
 	access := result.DockerAPIAccess()
+	hostAccess := result.HostAccess()
 	fmt.Fprintf(&message, "Workspace plan\n\n  Workspace  %s\n  Project    %s\n  Networks   %d isolated\n  Volumes    %d retained, isolated\n\n", result.Registration.ID, result.Project.Name, len(result.Project.Networks), len(result.Project.Volumes))
 	for _, name := range result.Project.ServiceNames() {
 		service := result.Project.Services[name]
@@ -180,12 +181,21 @@ func runPlan(command *cobra.Command, _ []string) error {
 				fmt.Fprintf(&message, "    Docker API: %s\n", item.Source)
 			}
 		}
+		for _, grant := range hostAccess {
+			if grant.Service != name {
+				continue
+			}
+			fmt.Fprintf(&message, "    Host access: %s\n", hostAccessSummary(grant))
+		}
 	}
 	if len(mounts) > 0 {
 		fmt.Fprintf(&message, "\n%d writable mounts; containers can modify these host paths.\n", len(mounts))
 	}
 	if len(access) > 0 {
 		message.WriteString("\nDocker API access is not workspace-scoped; those containers can control the Docker daemon.\n")
+	}
+	if len(hostAccess) > 0 {
+		message.WriteString("\nHost namespaces, capabilities, and devices are not workspace-isolated.\n")
 	}
 	if result.ContainerFiles > 0 {
 		fmt.Fprintf(&message, "\n%d container templates checked; rendered content is validated by up.\n", result.ContainerFiles)
@@ -199,6 +209,23 @@ func runPlan(command *cobra.Command, _ []string) error {
 	message.WriteString("\nOther host ports will be assigned by Docker. No resources were changed.\n")
 	_, err = io.WriteString(command.OutOrStdout(), message.String())
 	return err
+}
+
+func hostAccessSummary(access lifecycle.ServiceHostAccess) string {
+	var parts []string
+	if access.PID {
+		parts = append(parts, "pid: host")
+	}
+	if access.IPC {
+		parts = append(parts, "ipc: host")
+	}
+	for _, capability := range access.Capabilities {
+		parts = append(parts, "cap_add "+capability)
+	}
+	for _, device := range access.Devices {
+		parts = append(parts, "device "+device.Source+" ("+device.Permissions+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 func newDoctorCommand() *cobra.Command {

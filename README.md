@@ -101,7 +101,7 @@ Not every Compose project is supported unchanged. Trocker rejects unsafe sharing
 
 - Remote targets, UDP/IPv6 publications, and nonstandard network modes.
 - External or explicitly named networks/volumes, undeclared writable bind mounts, undeclared Docker socket access, and custom network addressing/drivers.
-- Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged/device/namespace access, and advanced build access/tags.
+- Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged access, and host namespace/capability/device access not declared in `host_access`.
 - User-declared Compose secrets, configs, and models. Trocker's generated files are supported separately.
 
 Writable bind mounts are opt-in. Declare every host path a container may modify under `read_write_paths`; paths resolve against `trocker.yaml` and must stay inside the checkout:
@@ -121,6 +121,21 @@ docker_socket_services:
 ```
 
 The socket does not belong in `read_write_paths`. A socket mount from an unlisted service fails before `up` and names the service to add. Socket access is not workspace-scoped: those containers can control the Docker daemon and resources belonging to other workspaces.
+
+Host process namespaces, capabilities, and devices are opt-in per service under `host_access`:
+
+```yaml
+host_access:
+  datadog-agent:
+    pid: true
+    ipc: true
+    capabilities: [SYS_PTRACE]
+    devices:
+      - source: /dev/kmsg
+        permissions: rw
+```
+
+`pid: true` permits `pid: host`; `ipc: true` permits `ipc: host`; `capabilities` is an allow-list for Compose `cap_add`; `devices` grants a device source and exact permissions. `plan` reports each active grant and warns that it is not workspace-isolated. `privileged`, `device_cgroup_rules`, `uts: host`, and `cgroup: host` remain unsupported.
 
 Built service names must be lowercase. The setup skill reports blockers rather than silently rewriting your Compose project. `trocker doctor` checks the supported subset; it is not a general security audit.
 

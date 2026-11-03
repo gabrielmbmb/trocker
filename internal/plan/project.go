@@ -150,6 +150,9 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	if service.Scale != nil && *service.Scale != 1 {
 		return fmt.Errorf("replicated services are not supported")
 	}
+	if err := checkHostAccess(service, manifest.HostAccessFor(service.Name)); err != nil {
+		return err
+	}
 	if service.UseAPISocket && !manifest.AllowsDockerSocket(service.Name) {
 		return newSocketError(service.Name, "")
 	}
@@ -212,6 +215,8 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	return nil
 }
 
+var dockerSocketPaths = []string{"/var/run/docker.sock", "/run/docker.sock"}
+
 // ExposesDockerSocket reports whether a bind source is a Docker API socket or
 // a directory containing one. A read-only mount does not prevent connecting to
 // a socket, so both modes grant API access. Matching is lexical; symlinks are
@@ -221,7 +226,7 @@ func ExposesDockerSocket(source string) bool {
 	if filepath.Base(source) == "docker.sock" {
 		return true
 	}
-	for _, socket := range []string{"/var/run/docker.sock", "/run/docker.sock"} {
+	for _, socket := range dockerSocketPaths {
 		if inside(source, socket) {
 			return true
 		}
@@ -235,54 +240,39 @@ func inside(root, path string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-// socketError rejects Docker API access that the manifest does not grant.
-type socketError struct {
-	service string
-	source  string
+// policyError is a safe, actionable isolation-policy diagnostic.
+type policyError struct {
+	problem string
+	help    string
+	note    string
 }
+
+func (e *policyError) Error() string { return e.problem }
+func (e *policyError) Help() string  { return e.help }
+func (e *policyError) Note() string  { return e.note }
 
 func newSocketError(service, source string) error {
-	return &socketError{service: service, source: source}
-}
-
-func (e *socketError) Error() string {
-	if e.source == "" {
-		return "use_api_socket is not declared in docker_socket_services"
+	help := "add " + service + " under docker_socket_services in trocker.yaml, or remove the Docker socket access"
+	note := "Docker API access is not limited to this workspace and can control other containers"
+	if source == "" {
+		return &policyError{problem: "use_api_socket is not declared in docker_socket_services", help: help, note: note}
 	}
-	return "Docker API access through " + e.source + " is not declared in docker_socket_services"
+	return &policyError{problem: "Docker API access through " + source + " is not declared in docker_socket_services", help: help, note: note}
 }
 
-func (e *socketError) Help() string {
-	return "add " + e.service + " under docker_socket_services in trocker.yaml, or remove the Docker socket access"
-}
-
-func (e *socketError) Note() string {
-	return "Docker API access is not limited to this workspace and can control other containers"
-}
-
-// writeError rejects a writable bind mount that no declared path allows.
+// newWriteError rejects a writable bind mount that no declared path allows.
 // Host paths are user input and plans print them, so they are safe to report.
-type writeError struct {
-	source  string
-	outside bool
-}
-
 func newWriteError(manifest *config.Manifest, source string) error {
-	return &writeError{source: source, outside: !manifest.Inside(source)}
-}
-
-func (e *writeError) Error() string {
-	if e.outside {
-		return "writable bind mount " + e.source + " is outside the checkout"
+	if !manifest.Inside(source) {
+		return &policyError{
+			problem: "writable bind mount " + source + " is outside the checkout",
+			help:    "only paths inside the checkout can be writable; remove the mount if it must stay outside",
+		}
 	}
-	return "writable bind mount " + e.source + " is not declared in read_write_paths"
-}
-
-func (e *writeError) Help() string {
-	if e.outside {
-		return "only paths inside the checkout can be writable; remove the mount if it must stay outside"
+	return &policyError{
+		problem: "writable bind mount " + source + " is not declared in read_write_paths",
+		help:    "add the path under read_write_paths in trocker.yaml, or mount it read-only",
 	}
-	return "add the path under read_write_paths in trocker.yaml, or mount it read-only"
 }
 
 func checkLabels(labels types.Labels, id string) error {

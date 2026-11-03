@@ -27,50 +27,6 @@ type PlanResult struct {
 	ContainerFiles int
 }
 
-// WritableMount is a bind mount that lets containers modify a host path.
-type WritableMount struct {
-	Service string
-	Source  string
-	Target  string
-}
-
-// WritableMounts lists declared writable bind mounts in service order.
-func (r PlanResult) WritableMounts() []WritableMount {
-	var mounts []WritableMount
-	for _, name := range r.Project.ServiceNames() {
-		for _, mount := range r.Project.Services[name].Volumes {
-			if mount.Type == types.VolumeTypeBind && !mount.ReadOnly && !plan.ExposesDockerSocket(mount.Source) {
-				mounts = append(mounts, WritableMount{Service: name, Source: mount.Source, Target: mount.Target})
-			}
-		}
-	}
-	return mounts
-}
-
-// DockerAPIAccess is a service that can reach the Docker daemon. Source is the
-// host socket path, or empty when Compose's use_api_socket adds the mount.
-type DockerAPIAccess struct {
-	Service string
-	Source  string
-}
-
-// DockerAPIAccess lists Docker API access in service order.
-func (r PlanResult) DockerAPIAccess() []DockerAPIAccess {
-	var access []DockerAPIAccess
-	for _, name := range r.Project.ServiceNames() {
-		service := r.Project.Services[name]
-		if service.UseAPISocket {
-			access = append(access, DockerAPIAccess{Service: name})
-		}
-		for _, mount := range service.Volumes {
-			if mount.Type == types.VolumeTypeBind && plan.ExposesDockerSocket(mount.Source) {
-				access = append(access, DockerAPIAccess{Service: name, Source: mount.Source})
-			}
-		}
-	}
-	return access
-}
-
 func preparePlan(ctx context.Context, directory string, store state.Store, services []string) (PlanResult, error) {
 	registration, err := registeredWorkspace(ctx, directory, store)
 	if err != nil {

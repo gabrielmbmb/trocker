@@ -294,15 +294,18 @@ func TestDockerSocketAccessRequiresServiceOptIn(t *testing.T) {
 
 func TestUnsupportedConfigurationsFailBeforeMutation(t *testing.T) {
 	for name, content := range map[string]string{
-		"dependency cycle": "services: {api: {image: busybox, depends_on: [web]}, web: {image: busybox, depends_on: [api]}}",
-		"explicit network": "services: {api: {image: busybox}}\nnetworks: {default: {name: shared}}",
-		"explicit volume":  "services: {api: {image: busybox, volumes: ['data:/data']}}\nvolumes: {data: {name: shared}}",
-		"external":         "services: {api: {image: busybox}}\nnetworks: {default: {external: true}}",
-		"host network":     "services: {api: {image: busybox, network_mode: host}}",
-		"writable bind":    "services: {api: {image: busybox, volumes: ['./data:/data']}}",
-		"UDP":              "services: {api: {image: busybox, ports: ['5353:53/udp']}}",
-		"privileged":       "services: {api: {image: busybox, privileged: true}}",
-		"identity":         "services: {api: {image: busybox, environment: {TROCKER_WORKSPACE_ID: do-not-print}}}",
+		"dependency cycle":    "services: {api: {image: busybox, depends_on: [web]}, web: {image: busybox, depends_on: [api]}}",
+		"explicit network":    "services: {api: {image: busybox}}\nnetworks: {default: {name: shared}}",
+		"explicit volume":     "services: {api: {image: busybox, volumes: ['data:/data']}}\nvolumes: {data: {name: shared}}",
+		"external":            "services: {api: {image: busybox}}\nnetworks: {default: {external: true}}",
+		"host network":        "services: {api: {image: busybox, network_mode: host}}",
+		"writable bind":       "services: {api: {image: busybox, volumes: ['./data:/data']}}",
+		"UDP":                 "services: {api: {image: busybox, ports: ['5353:53/udp']}}",
+		"privileged":          "services: {api: {image: busybox, privileged: true}}",
+		"UTS namespace":       "services: {api: {image: busybox, uts: host}}",
+		"cgroup namespace":    "services: {api: {image: busybox, cgroup: host}}",
+		"device cgroup rules": "services: {api: {image: busybox, device_cgroup_rules: ['c 1:3 mr']}}",
+		"identity":            "services: {api: {image: busybox, environment: {TROCKER_WORKSPACE_ID: do-not-print}}}",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, path := fixture(t, content)
@@ -351,6 +354,148 @@ func TestExposesDockerSocket(t *testing.T) {
 		t.Run(test.source, func(t *testing.T) {
 			if got := plan.ExposesDockerSocket(test.source); got != test.exposes {
 				t.Fatalf("ExposesDockerSocket(%q) = %v, want %v", test.source, got, test.exposes)
+			}
+		})
+	}
+}
+
+func TestHostAccessRequiresServiceGrant(t *testing.T) {
+	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
+	withGrant := func(fields string) string {
+		return "version: 1\ncompose: [compose.yaml]\nhost_access: {api: {" + fields + "}}\n"
+	}
+	const undeclared = "version: 1\ncompose: [compose.yaml]\n"
+	for _, test := range []struct {
+		name     string
+		compose  string
+		manifest string
+		granted  bool
+		problem  string
+	}{
+		{
+			name:     "declared pid",
+			compose:  "services: {api: {image: busybox, pid: host}}",
+			manifest: withGrant("pid: true"),
+			granted:  true,
+		},
+		{
+			name:     "undeclared pid",
+			compose:  "services: {api: {image: busybox, pid: host}}",
+			manifest: undeclared,
+			problem:  "pid: host is not declared",
+		},
+		{
+			name:     "unsupported pid",
+			compose:  "services: {api: {image: busybox, pid: 'service:web'}, web: {image: busybox}}",
+			manifest: withGrant("pid: true"),
+			problem:  "only pid: host is supported",
+		},
+		{
+			name:     "declared ipc",
+			compose:  "services: {api: {image: busybox, ipc: host}}",
+			manifest: withGrant("ipc: true"),
+			granted:  true,
+		},
+		{
+			name:     "private ipc needs no grant",
+			compose:  "services: {api: {image: busybox, ipc: private}}",
+			manifest: undeclared,
+		},
+		{
+			name:     "undeclared ipc",
+			compose:  "services: {api: {image: busybox, ipc: host}}",
+			manifest: undeclared,
+			problem:  "ipc: host is not declared",
+		},
+		{
+			name:     "unsupported ipc",
+			compose:  "services: {api: {image: busybox, ipc: shareable}}",
+			manifest: withGrant("ipc: true"),
+			problem:  "only ipc: host and ipc: private are supported",
+		},
+		{
+			name:     "declared capability",
+			compose:  "services: {api: {image: busybox, cap_add: [SYS_PTRACE]}}",
+			manifest: withGrant("capabilities: [SYS_PTRACE]"),
+			granted:  true,
+		},
+		{
+			name:     "capability case and prefix",
+			compose:  "services: {api: {image: busybox, cap_add: [cap_sys_ptrace]}}",
+			manifest: withGrant("capabilities: [SYS_PTRACE]"),
+			granted:  true,
+		},
+		{
+			name:     "undeclared capability",
+			compose:  "services: {api: {image: busybox, cap_add: [SYS_PTRACE]}}",
+			manifest: undeclared,
+			problem:  "cap_add SYS_PTRACE is not declared",
+		},
+		{
+			name:     "one undeclared capability",
+			compose:  "services: {api: {image: busybox, cap_add: [SYS_PTRACE, SYS_ADMIN]}}",
+			manifest: withGrant("capabilities: [SYS_PTRACE]"),
+			problem:  "cap_add SYS_ADMIN is not declared",
+		},
+		{
+			name:     "capability ALL",
+			compose:  "services: {api: {image: busybox, cap_add: [ALL]}}",
+			manifest: withGrant("capabilities: [SYS_PTRACE]"),
+			problem:  "cap_add ALL is not supported",
+		},
+		{
+			name:     "declared device",
+			compose:  "services: {api: {image: busybox, devices: ['/dev/kmsg:/dev/kmsg:rw']}}",
+			manifest: withGrant("devices: [{source: /dev/kmsg, permissions: rw}]"),
+			granted:  true,
+		},
+		{
+			name:     "device default permissions",
+			compose:  "services: {api: {image: busybox, devices: ['/dev/kmsg']}}",
+			manifest: withGrant("devices: [{source: /dev/kmsg, permissions: rwm}]"),
+			granted:  true,
+		},
+		{
+			name:     "device permissions are exact",
+			compose:  "services: {api: {image: busybox, devices: ['/dev/kmsg:/dev/kmsg:rwm']}}",
+			manifest: withGrant("devices: [{source: /dev/kmsg, permissions: rw}]"),
+			problem:  "device /dev/kmsg (rwm) is not declared",
+		},
+		{
+			name:     "undeclared device",
+			compose:  "services: {api: {image: busybox, devices: ['/dev/kmsg']}}",
+			manifest: undeclared,
+			problem:  "device /dev/kmsg (rwm) is not declared",
+		},
+		{
+			name:     "other service granted",
+			compose:  "services: {api: {image: busybox, pid: host}, web: {image: busybox}}",
+			manifest: "version: 1\ncompose: [compose.yaml]\nhost_access: {web: {pid: true}}\n",
+			problem:  "pid: host is not declared",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := plan.Build(manifest, source, registration, plan.Options{})
+			if test.problem != "" {
+				var help interface{ Help() string }
+				if err == nil || !strings.Contains(err.Error(), test.problem) {
+					t.Fatalf("error = %v, want %q", err, test.problem)
+				}
+				if !errors.As(err, &help) || help.Help() == "" {
+					t.Fatalf("error has no recovery guidance: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := project.Services["api"]
+			if test.granted && service.Pid != "host" && service.Ipc != "host" && len(service.CapAdd) == 0 && len(service.Devices) == 0 {
+				t.Fatal("host access was not preserved")
 			}
 		})
 	}
