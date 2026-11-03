@@ -29,6 +29,33 @@ func (r PlanResult) WritableMounts() []WritableMount {
 	return mounts
 }
 
+// BuildContext is a host path that an image build reads beyond its context.
+type BuildContext struct {
+	Service string
+	Name    string
+	Source  string
+}
+
+// BuildContexts lists additional image build contexts in service and name order.
+func (r PlanResult) BuildContexts() []BuildContext {
+	var contexts []BuildContext
+	for _, name := range r.Project.ServiceNames() {
+		build := r.Project.Services[name].Build
+		if build == nil {
+			continue
+		}
+		names := make([]string, 0, len(build.AdditionalContexts))
+		for context := range build.AdditionalContexts {
+			names = append(names, context)
+		}
+		slices.Sort(names)
+		for _, context := range names {
+			contexts = append(contexts, BuildContext{Service: name, Name: context, Source: build.AdditionalContexts[context]})
+		}
+	}
+	return contexts
+}
+
 // DockerAPIAccess is a service that can reach the Docker daemon. Source is the
 // host socket path, or empty when Compose's use_api_socket adds the mount.
 type DockerAPIAccess struct {

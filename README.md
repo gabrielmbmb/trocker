@@ -102,7 +102,7 @@ Not every Compose project is supported unchanged. Trocker rejects unsafe sharing
 
 - Remote targets, UDP/IPv6 publications, and nonstandard network modes.
 - External or explicitly named networks/volumes, undeclared writable bind mounts, undeclared Docker socket access, and custom network addressing/drivers.
-- Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged access, and host namespace/capability/device access not declared in `host_access`.
+- Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged access, host namespace/capability/device access not declared in `host_access`, and additional build contexts not declared in `build_contexts`.
 - User-declared Compose secrets, configs, and models. Trocker's generated files are supported separately.
 
 Writable bind mounts are opt-in. Declare every host path a container may modify under `read_write_paths`; paths resolve against `trocker.yaml` and must stay inside the checkout:
@@ -113,6 +113,15 @@ read_write_paths:
 ```
 
 `plan` lists each writable mount before `up` runs, and an undeclared mount fails with the path that needs declaring. Read-only bind mounts need no declaration.
+
+Additional image build contexts are opt-in too. Compose `build.additional_contexts` lets a Dockerfile read host directories beyond its build context, so declare those directories under `build_contexts`; the same resolution and containment rules apply:
+
+```yaml
+build_contexts:
+  - packages
+```
+
+`plan` lists each declared context before `up` runs. Undeclared paths, paths outside the checkout, `service:` references, and remote contexts fail before the build. Compose `build.context` and `build.dockerfile` are not gated, so a build still reads whatever host paths those point at; `build_contexts` governs the extra ones.
 
 Docker API access is opt-in per service. List services that may mount the Docker socket, or use Compose's `use_api_socket`, under `docker_socket_services`:
 

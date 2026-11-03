@@ -9,13 +9,14 @@ version: 1
 compose:
   - compose.yaml
 read_write_paths: []
+build_contexts: []
 docker_socket_services: []
 host_access: {}
 endpoints: {}
 bindings: {}
 ```
 
-`read_write_paths`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`read_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -73,6 +74,22 @@ read_write_paths:
 - `plan` and `doctor` list every writable mount, because containers can modify those host paths once `up` runs.
 
 External host paths, such as a home-directory cache, cannot be declared here. Docker sockets use `docker_socket_services` instead.
+
+### `build_contexts`
+
+Optional list of host paths that Compose `build.additional_contexts` entries may read. `build.context` and `build.dockerfile` need no declaration.
+
+```yaml
+build_contexts:
+  - packages
+```
+
+- Each entry is nonempty. Relative paths resolve against the directory containing `trocker.yaml`; the resolved path must be that directory or inside it.
+- An additional context is accepted when its source equals a declared path or is nested under it. Matching is lexical and component-wise, like `read_write_paths`.
+- Values that are not local paths are rejected: `service:<name>` references and remote contexts (`https://`, `git@`, `docker-image://`, `ssh://`) are unsupported. Errors name the context but never repeat the value, which can carry credentials.
+- Undeclared contexts, and paths outside the checkout, fail before mutation.
+- `plan` and `doctor` list each context as `Build context: <name> -> <host path>`.
+- A declaration authorizes reads at image build time only. It does not authorize a writable mount; use `read_write_paths` for that.
 
 ### `docker_socket_services`
 

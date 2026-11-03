@@ -235,47 +235,79 @@ func TestLoadResolvesPathsWithoutChangingFiles(t *testing.T) {
 	}
 }
 
-func TestLoadConfinesReadWritePathsToManifestDirectory(t *testing.T) {
+func TestLoadConfinesDeclaredCheckoutPaths(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	for _, test := range []struct {
+	for _, field := range []struct {
 		name  string
-		path  string
-		valid bool
+		paths func(*config.Manifest) []string
 	}{
-		{"directory", ".", true},
-		{"absolute inside", filepath.Join(directory, "packages"), true},
-		{"parent", "..", false},
-		{"absolute outside", filepath.Dir(directory), false},
-		{"empty path", "''", false},
+		{"read_write_paths", func(manifest *config.Manifest) []string { return manifest.ReadWritePaths }},
+		{"build_contexts", func(manifest *config.Manifest) []string { return manifest.BuildContexts }},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			manifestPath := filepath.Join(directory, test.name+".yaml")
-			content := "version: 1\ncompose: [compose.yaml]\nread_write_paths:\n  - " + test.path + "\n"
-			if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			manifest, err := config.Load(manifestPath)
-			if (err == nil) != test.valid {
-				t.Fatalf("valid = %v, error = %v", test.valid, err)
-			}
-			if err != nil {
-				var validation *config.Error
-				if !errors.As(err, &validation) || !strings.HasPrefix(validation.Field, "read_write_paths") {
-					t.Fatalf("error = %v, want read_write_paths field", err)
+		for _, test := range []struct {
+			name  string
+			path  string
+			valid bool
+		}{
+			{"directory", ".", true},
+			{"absolute inside", filepath.Join(directory, "packages"), true},
+			{"parent", "..", false},
+			{"absolute outside", filepath.Dir(directory), false},
+			{"empty path", "''", false},
+		} {
+			t.Run(field.name+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				manifestPath := filepath.Join(directory, field.name+"-"+test.name+".yaml")
+				content := "version: 1\ncompose: [compose.yaml]\n" + field.name + ":\n  - " + test.path + "\n"
+				if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			want := test.path
-			if !filepath.IsAbs(want) {
-				want = filepath.Join(directory, want)
-			}
-			want = filepath.Clean(want)
-			if manifest.ReadWritePaths[0] != want {
-				t.Fatalf("writable path = %s, want %s", manifest.ReadWritePaths[0], want)
-			}
-		})
+				manifest, err := config.Load(manifestPath)
+				if (err == nil) != test.valid {
+					t.Fatalf("valid = %v, error = %v", test.valid, err)
+				}
+				if err != nil {
+					var validation *config.Error
+					if !errors.As(err, &validation) || !strings.HasPrefix(validation.Field, field.name) {
+						t.Fatalf("error = %v, want %s field", err, field.name)
+					}
+					return
+				}
+				want := test.path
+				if !filepath.IsAbs(want) {
+					want = filepath.Join(directory, want)
+				}
+				want = filepath.Clean(want)
+				if got := field.paths(manifest); len(got) != 1 || got[0] != want {
+					t.Fatalf("declared path = %v, want %s", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestAllowsBuildContextCoversDeclaredPathsOnly(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "trocker.yaml")
+	content := "version: 1\ncompose: [compose.yaml]\nbuild_contexts: [packages]\n"
+	if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := config.Load(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packages := filepath.Join(directory, "packages")
+	for source, want := range map[string]bool{
+		packages:                       true,
+		filepath.Join(packages, "sdk"): true,
+		filepath.Join(directory, "packages-cache"): false,
+	} {
+		if got := manifest.AllowsBuildContext(source); got != want {
+			t.Fatalf("AllowsBuildContext(%s) = %v, want %v", source, got, want)
+		}
 	}
 }
 

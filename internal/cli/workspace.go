@@ -157,6 +157,7 @@ func runPlan(command *cobra.Command, _ []string) error {
 		message.WriteString("Isolation, binding, and ownership checks passed.\n\n")
 	}
 	mounts := result.WritableMounts()
+	buildContexts := result.BuildContexts()
 	access := result.DockerAPIAccess()
 	hostAccess := result.HostAccess()
 	fmt.Fprintf(&message, "Workspace plan\n\n  Workspace  %s\n  Project    %s\n  Networks   %d isolated\n  Volumes    %d retained, isolated\n\n", result.Registration.ID, result.Project.Name, len(result.Project.Networks), len(result.Project.Volumes))
@@ -169,6 +170,11 @@ func runPlan(command *cobra.Command, _ []string) error {
 		for _, mount := range mounts {
 			if mount.Service == name {
 				fmt.Fprintf(&message, "    Writable mount: %s -> %s\n", mount.Source, mount.Target)
+			}
+		}
+		for _, context := range buildContexts {
+			if context.Service == name {
+				fmt.Fprintf(&message, "    Build context: %s -> %s\n", context.Name, context.Source)
 			}
 		}
 		for _, item := range access {

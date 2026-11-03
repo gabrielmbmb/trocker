@@ -17,6 +17,7 @@ type Manifest struct {
 	Version              int                        `yaml:"version"`
 	Compose              []string                   `yaml:"compose"`
 	ReadWritePaths       []string                   `yaml:"read_write_paths"`
+	BuildContexts        []string                   `yaml:"build_contexts"`
 	DockerSocketServices []string                   `yaml:"docker_socket_services"`
 	HostAccess           map[string]HostAccessGrant `yaml:"host_access"`
 	Endpoints            map[string]Endpoint        `yaml:"endpoints"`
@@ -89,27 +90,31 @@ func Load(path string) (*Manifest, error) {
 		}
 		manifest.Compose[i] = filepath.Clean(path)
 	}
-	if err := manifest.resolveReadWritePaths(); err != nil {
+	if manifest.ReadWritePaths, err = manifest.resolveCheckoutPaths("read_write_paths", manifest.ReadWritePaths); err != nil {
+		return nil, err
+	}
+	if manifest.BuildContexts, err = manifest.resolveCheckoutPaths("build_contexts", manifest.BuildContexts); err != nil {
 		return nil, err
 	}
 	return manifest, nil
 }
 
-// resolveReadWritePaths makes declared host paths absolute but never lets them
-// reach outside the checkout. Containment is lexical: a mount source is matched
+// resolveCheckoutPaths makes declared host paths absolute but never lets them
+// reach outside the checkout. Containment is lexical: a source is matched
 // against the declared path, not against the symlinks it may resolve to.
-func (m *Manifest) resolveReadWritePaths() error {
-	for i, path := range m.ReadWritePaths {
+func (m *Manifest) resolveCheckoutPaths(field string, paths []string) ([]string, error) {
+	resolved := slices.Clone(paths)
+	for i, path := range resolved {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(m.Directory, path)
 		}
 		path = filepath.Clean(path)
 		if !inside(m.Directory, path) {
-			return invalid(fmt.Sprintf("read_write_paths[%d]", i), "expected a path inside the manifest directory")
+			return nil, invalid(fmt.Sprintf("%s[%d]", field, i), "expected a path inside the manifest directory")
 		}
-		m.ReadWritePaths[i] = path
+		resolved[i] = path
 	}
-	return nil
+	return resolved, nil
 }
 
 // Inside reports whether path is the manifest directory or below it.
@@ -119,6 +124,17 @@ func (m *Manifest) Inside(path string) bool { return inside(m.Directory, path) }
 // Callers must pass a clean absolute path, which Compose produces.
 func (m *Manifest) AllowsWrite(source string) bool {
 	for _, path := range m.ReadWritePaths {
+		if inside(path, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowsBuildContext reports whether an image build may read a host path.
+// Callers must pass a clean absolute path, which Compose produces.
+func (m *Manifest) AllowsBuildContext(source string) bool {
+	for _, path := range m.BuildContexts {
 		if inside(path, source) {
 			return true
 		}
@@ -172,6 +188,11 @@ func (m *Manifest) Validate() error {
 	for i, path := range m.ReadWritePaths {
 		if strings.TrimSpace(path) == "" {
 			return invalid(fmt.Sprintf("read_write_paths[%d]", i), "expected a nonempty host path")
+		}
+	}
+	for i, path := range m.BuildContexts {
+		if strings.TrimSpace(path) == "" {
+			return invalid(fmt.Sprintf("build_contexts[%d]", i), "expected a nonempty host path")
 		}
 	}
 	seen := make(map[string]bool, len(m.DockerSocketServices))

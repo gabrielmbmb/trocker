@@ -13,9 +13,12 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §1.1 writable bind mounts | Declared per manifest in `read_write_paths`; undeclared writable mounts still fail. |
 | §1.2 Docker socket | Declared per service in `docker_socket_services`, with a dedicated diagnostic. |
 | §1.3 `pid`/`ipc`/`cap_add`/`devices` | Declared per service in `host_access`; `privileged`, `uts`, `cgroup`, and `device_cgroup_rules` remain rejected. |
+| §1 `build.additional_contexts` | Declared per manifest in `build_contexts`; only in-checkout paths, and `service:`/remote contexts stay rejected. |
 | §3.2, §3.3, §3.8 workspace removal | Registration now tracks the worktree, not the stack. `trocker release [WORKSPACE] [--volumes]` stops what a workspace still owns from any directory and then deletes its registration; `init` sweeps registrations whose worktree Git no longer records and which own nothing; `ls --all` reports the rest as `missing`. |
 
 Everything below still applies. §1.4, §1.5, §2, §3.1, §3.4–§3.7, §4, and §5 are unchanged by the resolution above.
+
+One correction to the inventory: only `kennedy-frontend` declares `additional_contexts`, and both of its values are inside the checkout; `website` and `swag` do not use it. With `build_contexts` in place, the next blocker is the writable `~/.aws/sso/cache` mount used by `apollo`, `hubble`, `kennedy-api`, `kennedy-worker`, and `asset-sentinel-worker` — the residual §1.1 case, since `read_write_paths` stops at the checkout.
 
 ## 1. Blockers: unsupported Compose constructs
 
@@ -26,7 +29,7 @@ The deny-list in `internal/compose/load.go` (`LoadForPlan`) plus the checks in `
 | Writable bind mounts | `isolateService`, `types.VolumeTypeBind` case | Source mounts on 10 services (`.:/workspace/packages/<service>`, `.:/app`) | Resolved: `read_write_paths` |
 | Docker socket as a bind mount | Same check as above | `localstack`, `dozzle`, `datadog-agent` | Resolved: `docker_socket_services` |
 | `pid: host` (namespace access) | `LoadForPlan` deny-list, `services.*.pid` | `datadog-agent`, which the aggregator includes unconditionally | Resolved: `host_access` |
-| `build.additional_contexts` | `LoadForPlan` deny-list | Frontend image builds against sibling workspace packages | Common in pnpm/turbo monorepos |
+| `build.additional_contexts` | `LoadForPlan` deny-list | Frontend image builds against sibling workspace packages | Resolved: `build_contexts` |
 | `deploy.*` rejected as a whole key | `LoadForPlan` deny-list, `services.*.deploy` | Not used here | See §1.4 |
 | Explicit `networks.*.name` / `volumes.*.name` | `LoadForPlan` deny-list | Not used here | See §1.5 |
 | `secrets`, `configs`, `models`, `jobs`, `provider`, `hooks`, `develop` | `LoadForPlan` deny-list | `develop` would be the obvious fallback for §1.1 | Rejecting `develop` removes the only mount-free hot-reload path |

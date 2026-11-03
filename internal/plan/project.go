@@ -204,6 +204,9 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 		if err := checkLabels(service.Build.Labels, registration.ID); err != nil {
 			return err
 		}
+		if err := checkBuildContexts(service.Build.AdditionalContexts, manifest); err != nil {
+			return err
+		}
 		service.Image = registration.ProjectName() + "-" + service.Name + ":latest"
 		service.Build.Labels = service.Build.Labels.Add(WorkspaceLabel, id)
 	}
@@ -258,6 +261,39 @@ func newSocketError(service, source string) error {
 		return &policyError{problem: "use_api_socket is not declared in docker_socket_services", help: help, note: note}
 	}
 	return &policyError{problem: "Docker API access through " + source + " is not declared in docker_socket_services", help: help, note: note}
+}
+
+// checkBuildContexts rejects additional build contexts the manifest does not
+// declare. Compose normalizes local values to clean absolute paths before
+// planning, so anything else is a service reference or a remote source. Those
+// are reported by name only: a remote URL can carry credentials.
+func checkBuildContexts(contexts types.Mapping, manifest *config.Manifest) error {
+	const help = "only paths declared under build_contexts in trocker.yaml are supported"
+	names := make([]string, 0, len(contexts))
+	for name := range contexts {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		source := contexts[name]
+		switch {
+		case strings.HasPrefix(source, types.ServicePrefix):
+			return &policyError{problem: "build context " + name + " refers to another service", help: help}
+		case !filepath.IsAbs(source):
+			return &policyError{problem: "build context " + name + " is not a local path", help: help}
+		case !manifest.Inside(source):
+			return &policyError{
+				problem: "build context " + name + " at " + source + " is outside the checkout",
+				help:    "only paths inside the checkout can be build contexts",
+			}
+		case !manifest.AllowsBuildContext(source):
+			return &policyError{
+				problem: "build context " + name + " at " + source + " is not declared in build_contexts",
+				help:    "add the path under build_contexts in trocker.yaml, or remove the additional context",
+			}
+		}
+	}
+	return nil
 }
 
 // newWriteError rejects a writable bind mount that no declared path allows.

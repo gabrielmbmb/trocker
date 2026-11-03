@@ -52,3 +52,23 @@ func TestPlanReportsHostAccess(t *testing.T) {
 		t.Fatalf("host devices = %#v", entry.Devices)
 	}
 }
+
+func TestPlanReportsBuildContextsInOrder(t *testing.T) {
+	project := &types.Project{Services: types.Services{
+		"web": {Name: "web", Build: &types.BuildConfig{AdditionalContexts: types.Mapping{
+			"shared":  "/checkout/packages/shared",
+			"private": "/checkout/packages/private",
+		}}},
+		"api": {Name: "api"},
+	}}
+	result := lifecycle.PlanResult{Project: project}
+
+	contexts := result.BuildContexts()
+	if len(contexts) != 2 {
+		t.Fatalf("build contexts = %#v", contexts)
+	}
+	if contexts[0] != (lifecycle.BuildContext{Service: "web", Name: "private", Source: "/checkout/packages/private"}) ||
+		contexts[1] != (lifecycle.BuildContext{Service: "web", Name: "shared", Source: "/checkout/packages/shared"}) {
+		t.Fatalf("build contexts = %#v", contexts)
+	}
+}

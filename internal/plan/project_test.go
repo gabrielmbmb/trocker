@@ -500,3 +500,91 @@ func TestHostAccessRequiresServiceGrant(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildContextsRequireDeclaredPaths(t *testing.T) {
+	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
+	withContexts := func(paths string) string {
+		return "version: 1\ncompose: [compose.yaml]\nbuild_contexts: [" + paths + "]\n"
+	}
+	const undeclared = "version: 1\ncompose: [compose.yaml]\n"
+	for _, test := range []struct {
+		name     string
+		compose  string
+		manifest string
+		problem  string
+	}{
+		{
+			name:     "declared path",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: ./packages}}}}",
+			manifest: withContexts("./packages"),
+		},
+		{
+			name:     "nested under declared path",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: ./packages/sdk}}}}",
+			manifest: withContexts("./packages"),
+		},
+		{
+			name:     "no additional contexts needs no declaration",
+			compose:  "services: {api: {image: busybox, build: {context: '.'}}}",
+			manifest: undeclared,
+		},
+		{
+			name:     "sibling prefix",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: ./packages-cache}}}}",
+			manifest: withContexts("./packages"),
+			problem:  "not declared in build_contexts",
+		},
+		{
+			name:     "undeclared path",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: ./packages}}}}",
+			manifest: undeclared,
+			problem:  "not declared in build_contexts",
+		},
+		{
+			name:     "outside checkout",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: ../outside}}}}",
+			manifest: withContexts("."),
+			problem:  "outside the checkout",
+		},
+		{
+			name:     "service reference",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: 'service:web'}}}, web: {image: busybox, build: {context: '.'}}}",
+			manifest: withContexts("."),
+			problem:  "refers to another service",
+		},
+		{
+			name:     "remote context",
+			compose:  "services: {api: {image: busybox, build: {context: '.', additional_contexts: {shared: 'https://user:token@example.com/repo.git'}}}}",
+			manifest: withContexts("."),
+			problem:  "is not a local path",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := plan.Build(manifest, source, registration, plan.Options{})
+			if test.problem != "" {
+				var help interface{ Help() string }
+				if err == nil || !strings.Contains(err.Error(), test.problem) {
+					t.Fatalf("error = %v, want %q", err, test.problem)
+				}
+				if !errors.As(err, &help) || help.Help() == "" {
+					t.Fatalf("error has no recovery guidance: %v", err)
+				}
+				if strings.Contains(err.Error(), "token") {
+					t.Fatalf("error exposed remote credentials: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			contexts := project.Services["api"].Build.AdditionalContexts
+			if len(contexts) != len(source.Services["api"].Build.AdditionalContexts) {
+				t.Fatalf("additional contexts were not preserved: %#v", contexts)
+			}
+		})
+	}
+}
