@@ -51,13 +51,24 @@ func writeStacks(out io.Writer, stacks []lifecycle.Stack, all bool) error {
 	if _, err := fmt.Fprintln(table, "WORKSPACE\tSTATUS\tWORKTREE"); err != nil {
 		return err
 	}
+	missing, retained := 0, false
 	for _, stack := range stacks {
 		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\n", stack.WorkspaceID, stack.Status, stack.Worktree); err != nil {
 			return err
 		}
+		if stack.Missing {
+			missing++
+			retained = retained || stack.Volumes > 0
+		}
 	}
 	if err := table.Flush(); err != nil {
 		return err
+	}
+	if missing > 0 {
+		message.WriteString("\nRun trocker release <workspace> to stop and forget a workspace whose worktree is gone.\n")
+		if retained {
+			message.WriteString("Add --volumes to remove the volumes it still owns.\n")
+		}
 	}
 	_, err := io.WriteString(out, message.String())
 	return err

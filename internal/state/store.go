@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -211,4 +212,26 @@ func (r Registry) validate() error {
 		ids[registration.ID], roots[c.Root], gitDirs[c.GitDir] = true, true, true
 	}
 	return r.validatePorts()
+}
+
+// RemoveTarget drops one Docker target association together with the port
+// preferences that depend on it, and reports whether that removed the
+// registration itself. Port preferences must go with their association: a
+// preference whose workspace is gone makes the whole registry invalid.
+// Callers must hold the registry lock, which Store.Update provides.
+func (r *Registry) RemoveTarget(id, targetID string) (removed bool) {
+	r.Ports = slices.DeleteFunc(r.Ports, func(preference PortPreference) bool {
+		return preference.WorkspaceID == id && preference.TargetID == targetID
+	})
+	index := slices.IndexFunc(r.Workspaces, func(registration workspace.Registration) bool { return registration.ID == id })
+	if index < 0 {
+		return false
+	}
+	remaining := slices.DeleteFunc(r.Workspaces[index].Targets, func(target string) bool { return target == targetID })
+	if len(remaining) > 0 {
+		r.Workspaces[index].Targets = remaining
+		return false
+	}
+	r.Workspaces = slices.Delete(r.Workspaces, index, index+1)
+	return true
 }

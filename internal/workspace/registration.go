@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,42 @@ type Registration struct {
 }
 
 func (r Registration) ProjectName() string { return "trocker-" + strings.ReplaceAll(r.ID, "-", "") }
+
+// Liveness classifies a registration's checkout on disk.
+type Liveness int
+
+const (
+	// CheckoutLive means the checkout directory exists.
+	CheckoutLive Liveness = iota
+	// CheckoutGone means the checkout directory and its Git administrative
+	// directory are both absent: Git no longer records the worktree either.
+	CheckoutGone
+	// CheckoutUnconfirmed means the checkout directory is absent while its Git
+	// administrative directory survives. An interrupted `git worktree move`
+	// looks the same, so this is not proof that the workspace is gone.
+	CheckoutUnconfirmed
+)
+
+// CheckoutLiveness inspects only the filesystem; it never repairs or writes.
+func CheckoutLiveness(checkout Checkout) (Liveness, error) {
+	gone, err := pathMissing(checkout.Root)
+	if err != nil || !gone {
+		return CheckoutLive, err
+	}
+	gone, err = pathMissing(checkout.GitDir)
+	if err != nil || gone {
+		return CheckoutGone, err
+	}
+	return CheckoutUnconfirmed, nil
+}
+
+func pathMissing(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	return false, err
+}
 
 // Find associates a checkout by its Git administrative directory, not its branch.
 // A moved linked worktree is recognized but never persisted by this function.

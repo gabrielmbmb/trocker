@@ -85,13 +85,14 @@ You can manage the stack directly at any time:
 | `trocker start [SERVICE...]` | Restart existing containers without applying configuration edits |
 | `trocker down` | Remove workspace containers and networks; retain volumes |
 | `trocker down --volumes` | Also remove managed named and attached anonymous volumes |
+| `trocker release [WORKSPACE]` | Stop and forget a workspace, including one whose worktree is gone; `--volumes` removes retained data |
 | `trocker help COMMAND` | Show command options |
 
-`trocker ls` works from any directory and reports stacks for the selected Docker target. Add `--all` to include stopped stacks and registered worktrees without containers.
+`trocker ls` works from any directory and reports stacks for the selected Docker target. Add `--all` to include stopped stacks and registered worktrees without containers. Registrations whose worktree is gone are listed as `missing`; `trocker release` stops whatever they still own and forgets them.
 
 Use `up`, not `start`, to apply configuration changes. Service arguments to `up` select services and their Compose dependencies. Run `trocker up` without `--detach` to follow logs; end that foreground session before another mutating command for the same workspace.
 
-**Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Images and bind-mounted files are retained. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
+**Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Registration tracks the worktree rather than the stack, so `down` never deletes it: `init` releases registrations whose worktree Git no longer records and which own nothing, and `trocker release` removes the rest. Retained volumes keep a registration until they are released with `--volumes`, because the registration is what makes them removable. Images and bind-mounted files are retained. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
 
 ## Supported scope
 
@@ -139,7 +140,7 @@ host_access:
 
 Built service names must be lowercase. The setup skill reports blockers rather than silently rewriting your Compose project. `trocker doctor` checks the supported subset; it is not a general security audit.
 
-Trocker checks Compose and workspace ownership before changing resources. It does not automatically approve recreation prompts, remove orphans, or delete volumes after failed startup. Missing or conflicting registration requires explicit recovery; automatic recovery and forgetting are not implemented. `status` currently lists containers, not retained networks or volumes.
+Trocker checks Compose and workspace ownership before changing resources. It does not automatically approve recreation prompts, remove orphans, or delete volumes after failed startup. Missing or conflicting registration requires explicit recovery; deleting a worktree without letting Git forget it needs `git worktree prune` before Trocker releases the registration. `status` currently lists containers, not retained networks or volumes.
 
 ## Alternatives and advanced configuration
 

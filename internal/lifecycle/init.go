@@ -139,6 +139,17 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 	if err := revalidateInit(ctx, store, proposal); err != nil {
 		return registration, err
 	}
+	// Sweeping other workspaces is maintenance of provably inert registrations,
+	// which the confirmation does not describe, so it happens only after consent
+	// and never on a declined init.
+	target, err := compose.ResolveTarget(ctx)
+	if err != nil {
+		return registration, err
+	}
+	defer func() { err = errors.Join(err, target.Close()) }()
+	if err := reapDeadWorkspaces(ctx, store, target); err != nil {
+		return registration, err
+	}
 	if err := applyInitManifest(prepared); err != nil {
 		return registration, err
 	}
