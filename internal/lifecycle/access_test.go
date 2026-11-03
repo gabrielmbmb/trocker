@@ -6,6 +6,7 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
+	"github.com/gabrielmbmb/trocker/internal/workspace"
 )
 
 func TestPlanReportsDockerAPIAccessSeparately(t *testing.T) {
@@ -70,5 +71,24 @@ func TestPlanReportsBuildContextsInOrder(t *testing.T) {
 	if contexts[0] != (lifecycle.BuildContext{Service: "web", Name: "private", Source: "/checkout/packages/private"}) ||
 		contexts[1] != (lifecycle.BuildContext{Service: "web", Name: "shared", Source: "/checkout/packages/shared"}) {
 		t.Fatalf("build contexts = %#v", contexts)
+	}
+}
+
+func TestPlanReportsSharedWritableMounts(t *testing.T) {
+	project := &types.Project{Services: types.Services{
+		"api": {Name: "api", Volumes: []types.ServiceVolumeConfig{
+			{Type: types.VolumeTypeBind, Source: "/checkout/src", Target: "/app"},
+			{Type: types.VolumeTypeBind, Source: "/home/dev/.aws/sso/cache", Target: "/root/.aws/sso/cache"},
+			{Type: types.VolumeTypeBind, Source: "/checkout/docs", Target: "/docs", ReadOnly: true},
+		}},
+	}}
+	result := lifecycle.PlanResult{Project: project, Registration: workspace.Registration{Checkout: workspace.Checkout{Root: "/checkout"}}}
+
+	mounts := result.WritableMounts()
+	if len(mounts) != 2 || mounts[0].Shared || !mounts[1].Shared {
+		t.Fatalf("writable mounts = %#v", mounts)
+	}
+	if shared := result.SharedWritableMounts(); shared != 1 {
+		t.Fatalf("shared mounts = %d, want 1", shared)
 	}
 }

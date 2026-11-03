@@ -156,19 +156,38 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	if service.UseAPISocket && !manifest.AllowsDockerSocket(service.Name) {
 		return newSocketError(service.Name, "")
 	}
-	for _, mount := range service.Volumes {
+	for i := range service.Volumes {
+		mount := &service.Volumes[i]
 		switch mount.Type {
 		case types.VolumeTypeBind:
 			source := filepath.Clean(mount.Source)
+			// A declaration never authorizes the Docker API socket, so this
+			// check must stay ahead of both writable-path policies.
 			if ExposesDockerSocket(source) {
 				if !manifest.AllowsDockerSocket(service.Name) {
 					return newSocketError(service.Name, source)
 				}
 				continue
 			}
-			if !mount.ReadOnly && !manifest.AllowsWrite(source) {
-				return newWriteError(manifest, source)
+			if mount.ReadOnly {
+				continue
 			}
+			if manifest.Inside(source) {
+				if !manifest.AllowsWrite(source) {
+					return newWriteError(source)
+				}
+				continue
+			}
+			if !manifest.AllowsSharedWrite(source) {
+				return newSharedWriteError(source)
+			}
+			// Docker creates a missing bind source by default, which would turn
+			// a typo into a new directory on the host. Shared paths are the
+			// host's, so a missing one must fail the mount instead.
+			if mount.Bind == nil {
+				mount.Bind = &types.ServiceVolumeBind{}
+			}
+			mount.Bind.CreateHostPath = false
 		case types.VolumeTypeVolume:
 			if mount.Source == "" {
 				return fmt.Errorf("anonymous volumes are not supported; declare a named volume")
@@ -230,17 +249,11 @@ func ExposesDockerSocket(source string) bool {
 		return true
 	}
 	for _, socket := range dockerSocketPaths {
-		if inside(source, socket) {
+		if config.Inside(source, socket) {
 			return true
 		}
 	}
 	return false
-}
-
-// inside reports whether path is root or a descendant of root.
-func inside(root, path string) bool {
-	relative, err := filepath.Rel(root, path)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // policyError is a safe, actionable isolation-policy diagnostic.
@@ -296,18 +309,22 @@ func checkBuildContexts(contexts types.Mapping, manifest *config.Manifest) error
 	return nil
 }
 
-// newWriteError rejects a writable bind mount that no declared path allows.
+// newWriteError rejects a checkout path that is writable but undeclared.
 // Host paths are user input and plans print them, so they are safe to report.
-func newWriteError(manifest *config.Manifest, source string) error {
-	if !manifest.Inside(source) {
-		return &policyError{
-			problem: "writable bind mount " + source + " is outside the checkout",
-			help:    "only paths inside the checkout can be writable; remove the mount if it must stay outside",
-		}
-	}
+func newWriteError(source string) error {
 	return &policyError{
 		problem: "writable bind mount " + source + " is not declared in read_write_paths",
 		help:    "add the path under read_write_paths in trocker.yaml, or mount it read-only",
+	}
+}
+
+// newSharedWriteError rejects a writable mount outside the checkout that no
+// declared shared path allows.
+func newSharedWriteError(source string) error {
+	return &policyError{
+		problem: "writable bind mount " + source + " is outside the checkout and not declared in shared_write_paths",
+		help:    "add the path under shared_write_paths in trocker.yaml, or mount it read-only",
+		note:    "paths outside the checkout are shared with the host and other workspaces",
 	}
 }
 

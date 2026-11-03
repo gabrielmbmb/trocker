@@ -17,6 +17,7 @@ type Manifest struct {
 	Version              int                        `yaml:"version"`
 	Compose              []string                   `yaml:"compose"`
 	ReadWritePaths       []string                   `yaml:"read_write_paths"`
+	SharedWritePaths     []string                   `yaml:"shared_write_paths"`
 	BuildContexts        []string                   `yaml:"build_contexts"`
 	DockerSocketServices []string                   `yaml:"docker_socket_services"`
 	HostAccess           map[string]HostAccessGrant `yaml:"host_access"`
@@ -96,6 +97,9 @@ func Load(path string) (*Manifest, error) {
 	if manifest.BuildContexts, err = manifest.resolveCheckoutPaths("build_contexts", manifest.BuildContexts); err != nil {
 		return nil, err
 	}
+	if manifest.SharedWritePaths, err = manifest.resolveSharedWritePaths(); err != nil {
+		return nil, err
+	}
 	return manifest, nil
 }
 
@@ -109,7 +113,7 @@ func (m *Manifest) resolveCheckoutPaths(field string, paths []string) ([]string,
 			path = filepath.Join(m.Directory, path)
 		}
 		path = filepath.Clean(path)
-		if !inside(m.Directory, path) {
+		if !Inside(m.Directory, path) {
 			return nil, invalid(fmt.Sprintf("%s[%d]", field, i), "expected a path inside the manifest directory")
 		}
 		resolved[i] = path
@@ -117,14 +121,69 @@ func (m *Manifest) resolveCheckoutPaths(field string, paths []string) ([]string,
 	return resolved, nil
 }
 
+// resolveSharedWritePaths expands ~ and rejects paths no mount may write.
+// Host paths outside the checkout belong to the machine, not to Trocker, so
+// this does not inspect the filesystem: read-only commands must not depend on
+// the host's state, and the mount itself fails when the directory is missing.
+func (m *Manifest) resolveSharedWritePaths() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, &Error{Field: "shared_write_paths", Problem: "cannot resolve the home directory", cause: err}
+	}
+	resolved := make([]string, len(m.SharedWritePaths))
+	seen := make(map[string]bool, len(resolved))
+	for i, path := range m.SharedWritePaths {
+		field := fmt.Sprintf("shared_write_paths[%d]", i)
+		path = strings.TrimSpace(path)
+		if path == "~" {
+			return nil, invalid(field, "expected a path below the home directory, not the home directory itself")
+		}
+		if rest, ok := strings.CutPrefix(path, "~/"); ok {
+			path = filepath.Join(home, rest)
+		} else if strings.HasPrefix(path, "~") {
+			return nil, invalid(field, "expected ~/ or an absolute path; named home directories are not supported")
+		}
+		if !filepath.IsAbs(path) {
+			return nil, invalid(field, "expected ~/ or an absolute path outside the checkout")
+		}
+		path = filepath.Clean(path)
+		switch {
+		case path == filepath.Dir(path):
+			return nil, invalid(field, "expected a path below the filesystem root")
+		case path == home:
+			return nil, invalid(field, "expected a path below the home directory, not the home directory itself")
+		case Inside(m.Directory, path):
+			return nil, invalid(field, "expected a path outside the checkout; use read_write_paths for checkout paths")
+		case Inside(path, m.Directory):
+			return nil, invalid(field, "expected a path that does not contain the checkout")
+		case seen[path]:
+			return nil, invalid("shared_write_paths", "duplicate path "+path)
+		}
+		seen[path] = true
+		resolved[i] = path
+	}
+	return resolved, nil
+}
+
 // Inside reports whether path is the manifest directory or below it.
-func (m *Manifest) Inside(path string) bool { return inside(m.Directory, path) }
+func (m *Manifest) Inside(path string) bool { return Inside(m.Directory, path) }
 
 // AllowsWrite reports whether a bind mount source may be mounted writable.
 // Callers must pass a clean absolute path, which Compose produces.
 func (m *Manifest) AllowsWrite(source string) bool {
 	for _, path := range m.ReadWritePaths {
-		if inside(path, source) {
+		if Inside(path, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowsSharedWrite reports whether a writable bind mount may use a host path
+// outside the checkout. Callers must pass a clean absolute path.
+func (m *Manifest) AllowsSharedWrite(source string) bool {
+	for _, path := range m.SharedWritePaths {
+		if Inside(path, source) {
 			return true
 		}
 	}
@@ -135,7 +194,7 @@ func (m *Manifest) AllowsWrite(source string) bool {
 // Callers must pass a clean absolute path, which Compose produces.
 func (m *Manifest) AllowsBuildContext(source string) bool {
 	for _, path := range m.BuildContexts {
-		if inside(path, source) {
+		if Inside(path, source) {
 			return true
 		}
 	}
@@ -147,9 +206,9 @@ func (m *Manifest) AllowsDockerSocket(service string) bool {
 	return slices.Contains(m.DockerSocketServices, service)
 }
 
-// inside reports whether path is root or a descendant of root. Rel compares
+// Inside reports whether path is root or a descendant of root. Rel compares
 // path components, so a sibling sharing a name prefix is not contained.
-func inside(root, path string) bool {
+func Inside(root, path string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
@@ -193,6 +252,11 @@ func (m *Manifest) Validate() error {
 	for i, path := range m.BuildContexts {
 		if strings.TrimSpace(path) == "" {
 			return invalid(fmt.Sprintf("build_contexts[%d]", i), "expected a nonempty host path")
+		}
+	}
+	for i, path := range m.SharedWritePaths {
+		if strings.TrimSpace(path) == "" {
+			return invalid(fmt.Sprintf("shared_write_paths[%d]", i), "expected a nonempty host path")
 		}
 	}
 	seen := make(map[string]bool, len(m.DockerSocketServices))

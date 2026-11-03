@@ -9,6 +9,7 @@ version: 1
 compose:
   - compose.yaml
 read_write_paths: []
+shared_write_paths: []
 build_contexts: []
 docker_socket_services: []
 host_access: {}
@@ -16,7 +17,7 @@ endpoints: {}
 bindings: {}
 ```
 
-`read_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -73,7 +74,25 @@ read_write_paths:
 - Undeclared writable mounts fail before mutation, naming the path to declare.
 - `plan` and `doctor` list every writable mount, because containers can modify those host paths once `up` runs.
 
-External host paths, such as a home-directory cache, cannot be declared here. Docker sockets use `docker_socket_services` instead.
+External host paths cannot be declared here; use `shared_write_paths`. Docker sockets use `docker_socket_services` instead.
+
+### `shared_write_paths`
+
+Optional list of host paths outside the checkout that containers may modify. These are machine-wide paths, such as a credentials cache, that other tools and every workspace also use.
+
+```yaml
+shared_write_paths:
+  - ~/.aws/sso/cache
+```
+
+- A leading `~/` expands to the home directory. Entries must otherwise be absolute; relative paths, `~user/...`, and environment expansion are rejected.
+- A path inside the checkout is rejected: use `read_write_paths`. A path that contains the checkout is also rejected.
+- The filesystem root and the home directory itself are rejected, and duplicates fail.
+- A writable bind mount outside the checkout is accepted when its source equals a declared path or is nested under it. Read-only external mounts need no declaration.
+- Mounts authorized this way are planned with `create_host_path: false`, so a missing directory fails instead of being created by Docker.
+- Trocker never creates, labels, or deletes these paths; teardown and `release` leave them untouched.
+- The declaration never authorizes the Docker API socket; that stays under `docker_socket_services`.
+- `plan` and `doctor` list each one as `Shared writable mount: <host path> -> <container path>` and state how many mounts are shared.
 
 ### `build_contexts`
 

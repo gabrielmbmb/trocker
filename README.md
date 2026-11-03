@@ -101,7 +101,7 @@ Trocker supports **local Docker targets, ordinary Compose bridge networking, and
 Not every Compose project is supported unchanged. Trocker rejects unsafe sharing and unsupported features, including:
 
 - Remote targets, UDP/IPv6 publications, and nonstandard network modes.
-- External or explicitly named networks/volumes, undeclared writable bind mounts, undeclared Docker socket access, and custom network addressing/drivers.
+- External or explicitly named networks/volumes, undeclared writable bind mounts, writable host paths outside the checkout that are not declared in `shared_write_paths`, undeclared Docker socket access, and custom network addressing/drivers.
 - Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged access, host namespace/capability/device access not declared in `host_access`, and additional build contexts not declared in `build_contexts`.
 - User-declared Compose secrets, configs, and models. Trocker's generated files are supported separately.
 
@@ -113,6 +113,15 @@ read_write_paths:
 ```
 
 `plan` lists each writable mount before `up` runs, and an undeclared mount fails with the path that needs declaring. Read-only bind mounts need no declaration.
+
+Host paths outside the checkout are opt-in per manifest, under `shared_write_paths`. They exist for machine-wide state a container must update, such as a credentials cache; a leading `~/` expands to the home directory:
+
+```yaml
+shared_write_paths:
+  - ~/.aws/sso/cache
+```
+
+These paths are not workspace-isolated. Every workspace and every other tool on the machine sees the same writes; Trocker never creates, labels, or deletes them; and a missing directory fails the mount instead of being created. `plan` marks each one as `Shared writable mount` and reports how many mounts are shared. Declarations inside the checkout belong in `read_write_paths`; paths that contain the checkout, the home directory itself, the filesystem root, and relative paths are rejected.
 
 Additional image build contexts are opt-in too. Compose `build.additional_contexts` lets a Dockerfile read host directories beyond its build context, so declare those directories under `build_contexts`; the same resolution and containment rules apply:
 

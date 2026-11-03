@@ -10,10 +10,13 @@ import (
 )
 
 // WritableMount is a bind mount that lets containers modify a host path.
+// Shared means the source is outside the checkout, so writes are visible to
+// the host and to every other workspace.
 type WritableMount struct {
 	Service string
 	Source  string
 	Target  string
+	Shared  bool
 }
 
 // WritableMounts lists declared writable bind mounts in service order.
@@ -22,7 +25,7 @@ func (r PlanResult) WritableMounts() []WritableMount {
 	for _, name := range r.Project.ServiceNames() {
 		for _, mount := range r.Project.Services[name].Volumes {
 			if mount.Type == types.VolumeTypeBind && !mount.ReadOnly && !plan.ExposesDockerSocket(mount.Source) {
-				mounts = append(mounts, WritableMount{Service: name, Source: mount.Source, Target: mount.Target})
+				mounts = append(mounts, WritableMount{Service: name, Source: mount.Source, Target: mount.Target, Shared: !config.Inside(r.Registration.Checkout.Root, mount.Source)})
 			}
 		}
 	}
@@ -54,6 +57,17 @@ func (r PlanResult) BuildContexts() []BuildContext {
 		}
 	}
 	return contexts
+}
+
+// SharedWritableMounts counts writable mounts whose source is outside the checkout.
+func (r PlanResult) SharedWritableMounts() int {
+	shared := 0
+	for _, mount := range r.WritableMounts() {
+		if mount.Shared {
+			shared++
+		}
+	}
+	return shared
 }
 
 // DockerAPIAccess is a service that can reach the Docker daemon. Source is the

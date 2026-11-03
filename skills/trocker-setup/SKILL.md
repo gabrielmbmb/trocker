@@ -1,6 +1,6 @@
 ---
 name: trocker-setup
-description: Prepare a Git checkout to use Trocker. Use when installing the Trocker CLI, creating or validating trocker.yaml, tracing Docker Compose files through includes, overrides, and extends, declaring endpoints, bindings, writable host paths, additional build contexts, Docker socket access, and host namespace/capability/device access, or checking setup readiness with trocker init, plan, and doctor.
+description: Prepare a Git checkout to use Trocker. Use when installing the Trocker CLI, creating or validating trocker.yaml, tracing Docker Compose files through includes, overrides, and extends, declaring endpoints, bindings, writable host paths, shared host paths, additional build contexts, Docker socket access, and host namespace/capability/device access, or checking setup readiness with trocker init, plan, and doctor.
 ---
 
 # Configure Trocker for this project
@@ -85,7 +85,7 @@ Read [Compose analysis](references/compose-analysis.md) before deciding what bel
 
 Do not flatten included files into `trocker.yaml`. The Compose SDK resolves and merges the hierarchy for each command.
 
-## 4. Declare writable host paths, build contexts, and host-level access
+## 4. Declare writable and shared host paths, build contexts, and host-level access
 
 A bind mount is writable unless the mount declares `:ro` (short syntax) or `read_only: true` (long syntax). Trocker rejects any writable bind mount whose host source is not declared under `read_write_paths`, because that mount lets a container modify files in the checkout.
 
@@ -95,7 +95,7 @@ From the step 3 inventory, list every writable bind mount with its resolved host
 - A source is allowed when it equals a declared path or is nested under it. `.:/app` can only be declared as `.`; `./packages/api:/app` can be declared as `./packages/api`.
 - Declare the narrowest path that covers the sources the user approves. One parent entry is fine when several approved mounts share it; do not declare `.` for a single nested mount.
 - Read-only mounts need no entry. Do not declare them.
-- A source outside the checkout cannot be declared in `read_write_paths`: no Docker socket, home-directory cache, `/tmp`, or absolute path outside the worktree. Docker sockets use `docker_socket_services` instead; other external paths are blockers. Do not move, copy, or rewrite the Compose mount to work around it.
+- A source outside the checkout cannot be declared in `read_write_paths`. Docker sockets use `docker_socket_services`; other external paths use `shared_write_paths`. Do not move, copy, or rewrite the Compose mount to work around a restriction.
 
 Show a table of service, host source, and container target, and ask once which paths to declare. Add entries only after the user confirms; never add a path speculatively.
 
@@ -105,6 +105,26 @@ read_write_paths:
 ```
 
 Confirm the result in `trocker plan`, which lists each writable mount as `Writable mount: <host source> -> <container target>`. The full contract is in [the manifest reference](references/manifest-reference.md#read_write_paths).
+
+### Shared host paths
+
+A writable mount outside the checkout is allowed only when its host source is declared under `shared_write_paths`. These are machine-wide paths that the host and every other workspace also use; a credentials cache such as `~/.aws/sso/cache` is the common case.
+
+```yaml
+shared_write_paths:
+  - ~/.aws/sso/cache
+```
+
+- Declare a host source, never a container target, and prefer the narrowest path that covers the approved mount.
+- A leading `~/` is the only expansion. Do not use relative paths, `~user/...`, or environment variables.
+- Paths inside the checkout belong in `read_write_paths`; paths that contain the checkout, the home directory itself, and the filesystem root are rejected.
+- Declare a path only after confirming that the container must write there. Read-only external mounts need no entry.
+- Mounts using a shared path are created with `create_host_path: false`, so the directory must already exist.
+- Trocker never creates, labels, or deletes these paths; teardown does not clean them up.
+- A declaration never authorizes the Docker API socket.
+- `trocker plan` reports them as `Shared writable mount: <host path> -> <container path>` and states how many mounts are shared.
+
+The full contract is in [the manifest reference](references/manifest-reference.md#shared_write_paths).
 
 ### Additional build contexts
 
@@ -232,7 +252,7 @@ Then validate in this order:
    trocker plan
    ```
    `doctor` and `plan` share the same isolation, binding, and ownership checks. `plan` also shows the workspace/project name, isolated resources, selected services, writable mounts, build contexts, Docker API access, host access, and ports that need coordination.
-3. Fix only `trocker.yaml` when validation reports a manifest problem. If validation reports an unregistered workspace or a target that is not associated, run `trocker init` and confirm. If it reports an undeclared writable bind mount or build context, return to step 4 and confirm the path with the user; report it as a blocker when the source is outside the checkout, is a `service:` reference, or is remote. If it reports Docker socket access or host access, return to the corresponding subsection in step 4 and confirm the service and grant with the user. If it reports an ambiguous move, a missing marker, a foreign resource, or an unsupported Compose feature, stop and report the exact blocker. Do not work around it by deleting state or rewriting Compose.
+3. Fix only `trocker.yaml` when validation reports a manifest problem. If validation reports an unregistered workspace or a target that is not associated, run `trocker init` and confirm. If it reports an undeclared writable bind mount, a shared host path, or a build context, return to step 4 and confirm the path with the user; report it as a blocker when a shared path contains the checkout or when a build context is a `service:` reference or remote. If it reports Docker socket access or host access, return to the corresponding subsection in step 4 and confirm the service and grant with the user. If it reports an ambiguous move, a missing marker, a foreign resource, or an unsupported Compose feature, stop and report the exact blocker. Do not work around it by deleting state or rewriting Compose.
 4. Re-run `trocker doctor` and `trocker plan` until both pass.
 
 Do not claim the project is ready if either check could not run because Docker was unreachable, registration was missing, or confirmation was unavailable.

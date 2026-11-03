@@ -588,3 +588,88 @@ func TestBuildContextsRequireDeclaredPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
+	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
+	withPaths := func(paths string) string {
+		return "version: 1\ncompose: [compose.yaml]\nshared_write_paths: [" + paths + "]\n"
+	}
+	const undeclared = "version: 1\ncompose: [compose.yaml]\n"
+	for _, test := range []struct {
+		name     string
+		compose  string
+		manifest string
+		problem  string
+		bind     bool
+	}{
+		{
+			name:     "declared external path",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache']}}",
+			manifest: withPaths("/var/cache/shared"),
+			bind:     true,
+		},
+		{
+			name:     "nested under declared external path",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared/nested:/cache']}}",
+			manifest: withPaths("/var/cache/shared"),
+			bind:     true,
+		},
+		{
+			name:     "long syntax",
+			compose:  "services: {api: {image: busybox, volumes: [{type: bind, source: /var/cache/shared, target: /cache}]}}",
+			manifest: withPaths("/var/cache/shared"),
+			bind:     true,
+		},
+		{
+			name:     "undeclared external path",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache']}}",
+			manifest: undeclared,
+			problem:  "outside the checkout and not declared in shared_write_paths",
+		},
+		{
+			name:     "read-only external path needs no declaration",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache:ro']}}",
+			manifest: undeclared,
+		},
+		{
+			name:     "shared path does not authorize a checkout path",
+			compose:  "services: {api: {image: busybox, volumes: ['./data:/data']}}",
+			manifest: withPaths("/var/cache/shared"),
+			problem:  "not declared in read_write_paths",
+		},
+		{
+			name:     "shared path does not authorize the docker socket",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run/docker.sock:/var/run/docker.sock']}}",
+			manifest: withPaths("/var/run"),
+			problem:  "not declared in docker_socket_services",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := plan.Build(manifest, source, registration, plan.Options{})
+			if test.problem != "" {
+				var help interface{ Help() string }
+				if err == nil || !strings.Contains(err.Error(), test.problem) {
+					t.Fatalf("error = %v, want %q", err, test.problem)
+				}
+				if !errors.As(err, &help) || help.Help() == "" {
+					t.Fatalf("error has no recovery guidance: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			mount := project.Services["api"].Volumes[0]
+			if !test.bind {
+				return
+			}
+			if mount.Bind == nil || bool(mount.Bind.CreateHostPath) {
+				t.Fatalf("shared bind mount may create a missing host path: %#v", mount.Bind)
+			}
+		})
+	}
+}
