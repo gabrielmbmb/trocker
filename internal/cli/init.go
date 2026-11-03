@@ -16,39 +16,98 @@ import (
 )
 
 func newInitCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "init",
 		Short: "Validate configuration and register this workspace after confirmation",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			_, terminal := term.GetFdInfo(command.InOrStdin())
-			if !terminal {
-				return fmt.Errorf("init requires an interactive terminal for confirmation; nothing written")
-			}
-			directory, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			stateDirectory, err := state.DefaultDirectory()
-			if err != nil {
-				return err
-			}
-			result, err := lifecycle.Init(command.Context(), directory, state.Store{Directory: stateDirectory}, func(proposal lifecycle.InitProposal) (bool, error) {
-				if err := writeInitProposal(command.ErrOrStderr(), proposal); err != nil {
-					return false, err
-				}
-				return confirmLine(command.Context(), command.InOrStdin())
-			})
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "Workspace registered\n\n  Config     trocker.yaml\n  Workspace  %s\n\nNo containers were started.\n", result.ID)
-			return err
-		},
+		RunE:  runInit,
 	}
+	command.Flags().Bool("print-proposal", false, "Print the proposal and its digest without writing anything")
+	command.Flags().String("confirm", "", "Register this workspace when the proposal still matches this digest")
+	return command
 }
 
-func writeInitProposal(out io.Writer, proposal lifecycle.InitProposal) error {
+// terminalError asks for a terminal or a digest-confirmed run.
+type terminalError struct{}
+
+func (terminalError) Error() string {
+	return "init requires an interactive terminal for confirmation; nothing written"
+}
+
+func (terminalError) Help() string {
+	return "run init --print-proposal, review the proposal, then run init --confirm <digest>"
+}
+
+// digestError rejects a confirmation captured against a different proposal.
+type digestError struct{}
+
+func (digestError) Error() string {
+	return "proposal differs from the confirmed digest; nothing written"
+}
+
+func (digestError) Help() string {
+	return "run init --print-proposal to review the current proposal and confirm its digest"
+}
+
+func runInit(command *cobra.Command, _ []string) error {
+	printProposal, err := command.Flags().GetBool("print-proposal")
+	if err != nil {
+		return err
+	}
+	digest, err := command.Flags().GetString("confirm")
+	if err != nil {
+		return err
+	}
+	if printProposal && digest != "" {
+		return fmt.Errorf("%w: --print-proposal cannot be combined with --confirm", ErrUsage)
+	}
+	if digest == "" && !printProposal {
+		if _, terminal := term.GetFdInfo(command.InOrStdin()); !terminal {
+			return terminalError{}
+		}
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	stateDirectory, err := state.DefaultDirectory()
+	if err != nil {
+		return err
+	}
+	store := state.Store{Directory: stateDirectory}
+
+	if printProposal {
+		proposal, err := lifecycle.PrepareInit(command.Context(), directory, store)
+		if err != nil {
+			return err
+		}
+		if err := writeInitProposal(command.ErrOrStderr(), proposal, false); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(command.OutOrStdout(), proposal.Digest)
+		return err
+	}
+
+	result, err := lifecycle.Init(command.Context(), directory, store, func(proposal lifecycle.InitProposal) (bool, error) {
+		if digest != "" {
+			if proposal.Digest != digest {
+				return false, digestError{}
+			}
+			return true, nil
+		}
+		if err := writeInitProposal(command.ErrOrStderr(), proposal, true); err != nil {
+			return false, err
+		}
+		return confirmLine(command.Context(), command.InOrStdin())
+	})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Workspace registered\n\n  Config     trocker.yaml\n  Workspace  %s\n\nNo containers were started.\n", result.ID)
+	return err
+}
+
+func writeInitProposal(out io.Writer, proposal lifecycle.InitProposal, prompt bool) error {
 	var message strings.Builder
 	fmt.Fprintf(&message, "Initialize workspace\n\n  Checkout   %s\n  Docker     %s\n", proposal.Checkout.Root, proposal.TargetHost)
 	if len(proposal.Manifest) > 0 {
@@ -70,9 +129,13 @@ func writeInitProposal(out io.Writer, proposal lifecycle.InitProposal) error {
 		for line := range strings.SplitSeq(strings.TrimSuffix(string(proposal.Manifest), "\n"), "\n") {
 			fmt.Fprintf(&message, "  %s\n", line)
 		}
-		message.WriteString("\nCreate configuration and register this workspace? [y/N] ")
-	} else {
-		message.WriteString("\nConfirm workspace registration? [y/N] ")
+	}
+	if prompt {
+		if len(proposal.Manifest) > 0 {
+			message.WriteString("\nCreate configuration and register this workspace? [y/N] ")
+		} else {
+			message.WriteString("\nConfirm workspace registration? [y/N] ")
+		}
 	}
 	_, err := io.WriteString(out, message.String())
 	return err

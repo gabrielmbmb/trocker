@@ -108,3 +108,65 @@ func TestInitDoesNotOverwriteConcurrentManifest(t *testing.T) {
 		})
 	}
 }
+
+// One approval covers every worktree that shares the approved configuration:
+// the digest deliberately excludes the checkout path and the identity.
+func TestInitDigestApprovalCoversAnotherWorktree(t *testing.T) {
+	directory, main := repository(t)
+	store := state.Store{Directory: filepath.Join(directory, "state")}
+	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte("services:\n  api:\n    image: busybox\n    expose: ['8000']\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(main, "trocker.yaml"), []byte("version: 1\ncompose: [compose.yaml]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, main, "add", "compose.yaml", "trocker.yaml")
+	git(t, main, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "manifest")
+	other := filepath.Join(directory, "other")
+	git(t, main, "worktree", "add", "--detach", other, "HEAD")
+
+	approved, err := lifecycle.PrepareInit(t.Context(), main, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Digest == "" {
+		t.Fatal("proposal carried no digest")
+	}
+	registry, err := store.Read()
+	if err != nil || len(registry.Workspaces) != 0 {
+		t.Fatalf("prepare must not register: %+v %v", registry, err)
+	}
+
+	if _, err := lifecycle.Init(t.Context(), other, store, func(p lifecycle.InitProposal) (bool, error) {
+		if p.Digest != approved.Digest {
+			t.Fatalf("another worktree produced a different digest: %s != %s", p.Digest, approved.Digest)
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err = store.Read()
+	if err != nil || len(registry.Workspaces) != 1 {
+		t.Fatalf("approval did not register the second worktree: %+v %v", registry, err)
+	}
+
+	// Editing the approved configuration must invalidate the same digest.
+	if err := os.WriteFile(filepath.Join(other, "trocker.yaml"), []byte("version: 1\ncompose: [compose.yaml]\nread_write_paths: [.]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	third := filepath.Join(directory, "third")
+	git(t, main, "worktree", "add", "--detach", third, "HEAD")
+	if err := os.WriteFile(filepath.Join(third, "trocker.yaml"), []byte("version: 1\ncompose: [compose.yaml]\nread_write_paths: [.]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lifecycle.Init(t.Context(), third, store, func(p lifecycle.InitProposal) (bool, error) {
+		return p.Digest == approved.Digest, nil
+	}); !errors.Is(err, lifecycle.ErrDeclined) {
+		t.Fatalf("edited manifest must not match the approved digest: %v", err)
+	}
+	registry, err = store.Read()
+	if err != nil || len(registry.Workspaces) != 1 {
+		t.Fatalf("declined registration was written: %+v %v", registry, err)
+	}
+}

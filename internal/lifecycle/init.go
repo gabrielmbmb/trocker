@@ -4,11 +4,15 @@ package lifecycle
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"go.yaml.in/yaml/v4"
@@ -29,9 +33,52 @@ type InitProposal struct {
 	NewTarget  bool
 	// Manifest is populated only for a newly proposed, secret-free manifest.
 	Manifest []byte
+	// Digest identifies the decisions this proposal asks the user to approve.
+	Digest string
 }
 
 var ErrDeclined = errors.New("initialization not confirmed; nothing written")
+
+// initDigestVersion invalidates digests captured against an older proposal shape.
+const initDigestVersion = "trocker-init-1"
+
+// initDigest covers what a registration approval actually decides: the effective
+// manifest, the Docker target, and whether a moved checkout is relinked. The
+// checkout path and the workspace identity are deliberately excluded, so an
+// approval of a configuration applies to every worktree that uses it. Editing
+// the manifest or switching daemons changes the digest and needs a new approval.
+func initDigest(manifest []byte, creating bool, targetID, targetHost string, moved bool) string {
+	var canonical strings.Builder
+	write := func(value string) {
+		canonical.WriteString(strconv.Itoa(len(value)))
+		canonical.WriteByte(':')
+		canonical.WriteString(value)
+	}
+	write(initDigestVersion)
+	if creating {
+		write("create")
+	} else {
+		write("keep")
+	}
+	write(string(manifest))
+	write(targetID)
+	write(targetHost)
+	if moved {
+		write("moved")
+	}
+	sum := sha256.Sum256([]byte(canonical.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+// PrepareInit returns the proposal that init would confirm, without writing
+// configuration or registration state.
+func PrepareInit(ctx context.Context, directory string, store state.Store) (InitProposal, error) {
+	prepared, err := prepareInit(ctx, directory, store)
+	if err != nil {
+		return InitProposal{}, err
+	}
+	return prepared.proposal, nil
+}
 
 // Init validates and presents the proposal before creating any local state.
 // It never creates or adopts Docker resources.
@@ -78,9 +125,14 @@ func prepareInit(ctx context.Context, directory string, store state.Store) (prep
 	}
 	defer func() { err = errors.Join(err, target.Close()) }()
 
+	effective, creating := original, false
+	if len(proposed) > 0 {
+		effective, creating = proposed, true
+	}
 	proposal := InitProposal{
 		Checkout: checkout, TargetID: target.ID, TargetHost: target.Host,
 		Moved: moved, NewTarget: true, Manifest: proposed,
+		Digest: initDigest(effective, creating, target.ID, target.Host, moved),
 	}
 	if index >= 0 {
 		existing := registry.Workspaces[index]
