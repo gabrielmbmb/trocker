@@ -8,7 +8,7 @@ description: Start an isolated development environment for the current Git workt
 The project already has Trocker configured. Use its existing `trocker.yaml`; do not recreate configuration or manually assign project names or ports.
 
 1. Confirm you are in the intended Git worktree with `git rev-parse --show-toplevel`, then work from that root. Check that `trocker.yaml` exists. If it is missing, use the `trocker-setup` skill instead.
-2. Run `trocker plan`. If the worktree or selected local Docker target needs registration, run `trocker init`, then retry the plan. Initialization requires the user to review and confirm in a terminal; if that is unavailable, ask them to run it. Never pipe confirmation or edit registration state.
+2. Run `trocker plan`. If the worktree or selected local Docker target needs registration, run `trocker init`, then retry the plan. Confirmation is the user's decision: let them answer the terminal prompt, or show them `trocker init --print-proposal` and use their approved digest with `trocker init --confirm <digest>`. Never pick the digest yourself, pipe confirmation, or edit registration state.
 3. Once the plan passes, start the environment:
    ```sh
    trocker up --detach

@@ -55,7 +55,7 @@ From your project's checkout, ask:
 
 > Set up Trocker for this project.
 
-Review the configuration and confirm `trocker init` in a terminal when prompted. Initialization registers the workspace without creating Docker resources. If the agent cannot handle interactive confirmation, run `trocker init` yourself and let it continue.
+Review the configuration and confirm `trocker init` in a terminal when prompted. Initialization registers the workspace without creating Docker resources. Where no terminal is available, `trocker init --print-proposal` prints the same proposal with a digest and writes nothing; `trocker init --confirm <digest>` registers only while the proposal still matches, so one reviewed approval can register any number of worktrees that share that configuration.
 
 The setup skill checks configuration without starting containers. Once validation passes, commit `trocker.yaml` so other worktrees can use it.
 
@@ -164,7 +164,7 @@ Trocker checks Compose and workspace ownership before changing resources. It doe
 
 ### Configure manually
 
-**Skills are recommended, not required.** Run `trocker init` to propose a minimal `trocker.yaml`, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack.
+**Skills are recommended, not required.** Run `trocker init` to propose a minimal `trocker.yaml`, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack. Add `--print-proposal` and `--confirm <digest>` to register without a terminal.
 
 Keep service definitions in Compose:
 

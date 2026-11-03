@@ -172,6 +172,7 @@ endpoints:
 - `https` and `wss` mean the application already listens with TLS. Trocker does not terminate or configure TLS.
 - `tcp` endpoints support `host` and `port` components but not `url`.
 - The `public` address representation is unsupported; use `host`.
+- Several aliases may name one service port; they share a single publication, so declare one alias per scheme a consumer needs (for example `gateway` on `http` and `gateway_ws` on `ws`).
 
 ### `bindings`
 
@@ -188,6 +189,8 @@ bindings:
 ```
 
 All sections are optional. The service key must name an active Compose service. Environment names match `[A-Za-z_][A-Za-z0-9_]*` and values are strings.
+
+Bindings are keyed by service name, not by service definition: a service declared with `extends` does not inherit the extended service's binding, so repeat the entries it needs.
 
 - `environment` overrides that service's Compose runtime environment after Compose resolves its own values.
 - `native.environment` has a separate scope. It is applied only by `trocker run SERVICE`, after the invoking process environment. It is not inherited from or merged with `environment`.

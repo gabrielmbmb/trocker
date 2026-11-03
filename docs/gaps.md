@@ -16,8 +16,11 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §1 `build.additional_contexts` | Declared per manifest in `build_contexts`; only in-checkout paths, and `service:`/remote contexts stay rejected. |
 | §1.1 writable paths outside the checkout | Declared per manifest in `shared_write_paths` with `~/` expansion; never created by Docker, never owned or removed by Trocker. |
 | §3.2, §3.3, §3.8 workspace removal | Registration now tracks the worktree, not the stack. `trocker release [WORKSPACE] [--volumes]` stops what a workspace still owns from any directory and then deletes its registration; `init` sweeps registrations whose worktree Git no longer records and which own nothing; `ls --all` reports the rest as `missing`. |
+| §3.1 non-interactive registration | `init --print-proposal` reports a digest and writes nothing; `init --confirm <digest>` registers only while the proposal still matches. The digest covers the effective manifest, the Docker target, creation, and relocation, and excludes the checkout path and identity, so one approval covers every worktree with that configuration. |
 
-Everything below still applies. §1.4, §1.5, §2, §3.1, §3.4–§3.7, §4, and §5 are unchanged by the resolution above.
+Re-verified against the adopter with a rebuilt binary: the full declaration set loads and builds with default profiles (16 active services) and with all five profiles enabled (21 services). Removing each declaration on its own is still rejected, naming the service and the path — `read_write_paths`, `shared_write_paths`, `docker_socket_services`, `host_access`, and, once `kennedy-frontend` is active, `build_contexts`.
+
+Everything below still applies. §1.4, §1.5, §2, §3.4–§3.7, §4, and §5 are unchanged by the resolutions above.
 
 One correction to the inventory: only `kennedy-frontend` declares `additional_contexts`, and both of its values are inside the checkout; `website` and `swag` do not use it. The writable `~/.aws/sso/cache` mount used by `apollo`, `hubble`, `kennedy-api`, `kennedy-worker`, and `asset-sentinel-worker` — the residual §1.1 case, since `read_write_paths` stops at the checkout — is now expressible as `shared_write_paths`.
 
@@ -101,7 +104,7 @@ The adopter's worktree lifecycle is agent-driven: an agent creates a worktree pe
 
 ### 3.1 Registration requires a terminal, per worktree
 
-`init` requires interactive confirmation, and there is no non-interactive path. In a workflow where worktrees are created and destroyed automatically, this is the difference between "use Trocker" and "call the human back for every task". A digest-based alternative preserves the safety property without the human: `init --print-proposal` emits a stable digest of the proposed configuration and registration, and `init --confirm <digest>` succeeds only when the proposed state still matches. An agent can obtain approval once per configuration, not once per worktree.
+Resolved: `init --print-proposal` and `init --confirm <digest>` register without a terminal. The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked; it excludes the checkout path and the workspace identity, so one approval covers every worktree that shares the configuration, while editing the manifest or switching daemons requires a new approval. Approving is still the user's decision: an agent may pass a digest the user approved, never choose one itself.
 
 ### 3.2 No way to unregister a workspace
 
@@ -132,9 +135,13 @@ Suggested shape: `trocker ps --json` (container names, services, states, health)
 
 There is no reference to `Profiles` anywhere in `internal/`, and no `--profile` flag on any command: profile-gated services appear purely because `COMPOSE_PROFILES` happened to be set in the invoking shell. The manifest cannot declare which services it wants, so `plan` in a shell without the variable fails with `endpoint service is not selected`, which points at the manifest rather than at the environment. A manifest-level service selection, or at least a `--profile` pass-through on `plan`/`up`/`down`, would make the failure self-explanatory.
 
+This is not only cosmetic. `ValidateProject` requires every `endpoints` and `bindings` service to be active, so a checked-in manifest that declares a host address for a profile-gated app fails validation unless the profile happens to be enabled. In the adopter, the three Next.js apps that most need browser-facing addresses are all profile-gated, so `endpoints` and `bindings` cannot cover them without making the manifest depend on the invoking shell. The same `trocker.yaml` then passes in one terminal and fails in another.
+
 ### 3.7 New-worktree state seeding has no hook
 
 A fresh worktree of a real project is not runnable: per-package `.env` files, secret-manager scoping (anything keyed by directory), and dev-only fixture files are all missing. Trocker owns workspace creation but has no hook between "registered" and "up", so every adopter rebuilds this step outside the tool — which is exactly the plumbing Trocker exists to remove. This is arguably out of scope, but it is the step that decides whether a new worktree is usable, and doing it twice (once in Trocker, once in project scripts) is the current outcome.
+
+Interpolation inputs are part of the same hole. The adopter's Compose file interpolates `${DD_AGENT_VERSION:?run the dev stack via just, which reads datadog-agent.version}`; loading without it fails before any policy check with `cannot load Compose configuration`, and there is no way to declare a derived value in the manifest. Adoption therefore requires an external wrapper that exports project-specific variables before every Trocker command, which is the pattern `trocker` is meant to replace.
 
 ### 3.8 No cross-workspace teardown
 
@@ -168,7 +175,7 @@ Ordered by services unblocked per unit of design risk, not by implementation cos
 | ~~1~~ | ~~Sharing policy for writable bind mounts (§1.1)~~ | Resolved: `read_write_paths` | |
 | ~~2~~ | ~~Socket-mount opt-in with a dedicated error (§1.2)~~ | Resolved: `docker_socket_services` | |
 | ~~3~~ | ~~`unregister`/`forget` + sweep (§3.2, §3.3)~~ | Resolved: `trocker release` + `init` sweep | |
-| 4 | Digest-based non-interactive `init` (§3.1) | Same, and it is the blocker an agent cannot work around | Confirmation still required, once per configuration |
+| ~~4~~ | ~~Digest-based non-interactive `init` (§3.1)~~ | Resolved: `init --print-proposal` + `init --confirm <digest>` | |
 | 5 | Declarable host port (§2.1–§2.3) | OAuth/OIDC, CORS, WebAuthn, webhooks | Still one owner per port; fail, never fall back |
 | 6 | `ps --json` / `logs` (§3.4, §3.5) | Test and debugging recipes that currently shell out | Read-only, no locking |
 | 7 | Deny-list completeness test (§4) | Confidence in the isolation claim | None — it is a test |

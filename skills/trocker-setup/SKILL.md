@@ -24,7 +24,7 @@ Turn the current Git worktree into a usable Trocker workspace:
 - Never add a `host_access` grant without explicit confirmation. It exposes host process state, host capabilities, or devices and is not workspace-isolated. Show the exact Compose declaration and matching grant before asking.
 - Never print `.env` values, Compose environment values, secrets, generated files, or full resolved Compose configuration. List keys or use targeted queries only.
 - Do not run `trocker up`, `start`, `stop`, `down`, or `run` unless the user explicitly asks for a runtime test. `init`, `plan`, and `doctor` are the normal setup checks.
-- Do not bypass `trocker init` confirmation. It intentionally requires a terminal. If no PTY is available, stop and ask the user to run the exact command; do not pipe `y`, hand-write registration state, or edit Trocker's registry.
+- Do not confirm registration on the user's behalf. With a terminal, run `trocker init` and let them answer the prompt. Without one, run `trocker init --print-proposal`, show them the proposal and its digest, and pass that exact digest to `trocker init --confirm` only after they approve it. Never pipe `y`, pick a digest yourself, hand-write registration state, or edit Trocker's registry.
 - Do not delete or reset Trocker state to clear a registration, ownership, or move error. Preserve it and report the recovery requirement.
 - Keep changes scoped. Do not rewrite an existing valid manifest with a fresh minimal one.
 - Ask before installing Trocker or changing the user's toolchain. Never install it silently.
@@ -59,6 +59,15 @@ trocker init
 
 Run it in a real terminal or PTY. The user must see the proposal and confirm it. The generated manifest contains only the SDK-selected top-level Compose files; empty `read_write_paths: []`, `docker_socket_services: []`, `host_access: {}`, `endpoints: {}`, and `bindings: {}` are expected at this stage.
 
+Without a terminal, the same confirmation is available as a digest, and the agent still does not approve it:
+
+```sh
+trocker init --print-proposal   # prints the proposal and a digest; writes nothing
+trocker init --confirm <digest> # registers only while that proposal still matches
+```
+
+The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked. It excludes the checkout path and the workspace identity, so one approved digest registers any number of worktrees that share that configuration; editing the manifest or switching daemons requires a new approval.
+
 - If init cannot find a Compose file, do not hand-write `trocker.yaml`. First locate the intended top-level file(s) using [Compose analysis](references/compose-analysis.md), then rerun init with an explicit selection, for example:
   ```sh
   COMPOSE_FILE=deploy/compose.yaml:deploy/compose.override.yaml trocker init
@@ -80,7 +89,7 @@ Read [Compose analysis](references/compose-analysis.md) before deciding what bel
   - explicit top-level overrides selected by `COMPOSE_FILE` or SDK defaults.
 - Resolve paths with Compose semantics relative to the active Compose project directory. Trocker uses the manifest directory as the project working directory, so a top-level file in `deploy/` resolves `include` and `extends.file` from the repository root, not from `deploy/`. An included file's own includes default to that included file's directory (or its declared `project_directory`). Account for the `project_directory` and `env_file` options when present.
 - Determine which services are actually active. Profile-gated services must be active through the environment when Trocker is used; there is no profile flag in `trocker.yaml`.
-- Build an inventory of services, declared container ports (`ports[].target` and `expose`), profiles, networks, volumes, bind mounts (writable or read-only, including Docker socket mounts), `build.additional_contexts`, `pid`, `ipc`, `cap_add`, `devices`, and unsupported features.
+- Build an inventory of services, declared container ports (`ports[].target` and `expose`), profiles, networks, volumes, bind mounts (writable or read-only, including Docker socket mounts), `build.additional_contexts`, `pid`, `ipc`, `cap_add`, `devices`, unsupported features, and every environment key whose value is a service address.
 - Distinguish top-level files from included files. If init proposed the wrong ones, decline, correct the selection, and retry.
 
 Do not flatten included files into `trocker.yaml`. The Compose SDK resolves and merges the hierarchy for each command.
@@ -206,13 +215,27 @@ Check every endpoint:
 - The scheme is verified from application configuration, health checks, documentation, or the service protocol. Do not guess HTTP vs HTTPS vs raw TCP. `https`/`wss` describe an existing TLS listener; Trocker does not add TLS.
 - Use `tcp` for protocols without a URL. Trocker cannot render `url` references for a `tcp` endpoint.
 - Do not add `public`; that address representation is unsupported.
-- Use one clear alias per address. YAML duplicate keys are rejected.
+- Use one clear alias per scheme. YAML duplicate keys are rejected.
+- Declare a second alias for one service port when consumers need two schemes, such as `gateway` on `http` and `gateway_ws` on `ws`. Aliases of one port share a single publication.
+- A container port that the service declares neither in `ports` nor in `expose` cannot be an endpoint, even when another service addresses it. Report the Compose declaration that would be needed; that address cannot be bound until it exists.
+- An endpoint or binding must name an active service, so declaring one for a service behind an inactive profile fails validation for the whole manifest. Treat the profile as a prerequisite for every Trocker command, or leave that service unwired and report it.
 
 When the scheme, listening port, or consumer is ambiguous, ask the user or omit the endpoint. A smaller valid manifest is better than an invented one.
 
 ## 6. Add bindings only when the application consumes them
 
 Bindings are runtime configuration overrides. Add one only after finding the actual environment key or configuration value the application reads.
+
+Work from an address inventory, not from the Compose `ports:` list. Collect every environment key or configuration value that holds a service address, from Compose `environment` entries, `.env` key names, and the application's own settings, and record a decision for each before writing the section:
+
+| Key | Consumer | Facing | Decision |
+| --- | --- | --- | --- |
+| `BACKEND_PUBLIC_URL` | `backend` | host, public redirect base | `endpoints.api.host.url` |
+| `GATEWAY_WS_URL` | `web` | host, browser socket | `endpoints.gateway_ws.host.url` |
+| `SERVICE_API_URL` | `web` | container | `endpoints.api.container.url` |
+| `GATEWAY_BASE_URL` | `backend` | container, port not declared | leave unbound, report |
+
+Bind the host-facing and port-bearing values, because Trocker assigns those addresses. Leave a constant service-DNS value alone: Trocker isolates networks and container names, not service names, so `http://redis:6379` keeps resolving. Do not override a value that a secret manager or deployment may point at a real cloud endpoint. Every key in the inventory is bound, deliberately unbound with a reason, or reported as a blocker.
 
 - **Container consumer:** `bindings.<service>.environment` with `{{ endpoints.<alias>.container.host|port|url }}`. Use this for server-side container-to-container traffic. The consumer and endpoint service must share a Compose network.
 - **Native consumer:** `bindings.<service>.native.environment` with `{{ endpoints.<alias>.host.host|port|url }}`. Native bindings must not use `container` references.
@@ -232,12 +255,14 @@ bindings:
 Rules:
 
 - Preserve the exact environment key the application uses. Do not rename or invent keys.
+- Bindings are keyed by service name. A service declared with `extends` does not inherit the extended service's binding; repeat the entries it needs.
+- A container whose public base URL points at itself needs a `host` reference to its own service, such as its AuthKit redirect base. That reference makes `plan` coordinate the port before startup.
 - Do not bind values consumed only at image build time.
 - Do not add `TROCKER_WORKSPACE_ID`; Trocker injects it into every managed container and native child.
 - `files.<name>.path` may be referenced only in the environment of the consumer declaring that file.
 - Literal text plus references is allowed. There are no functions, conditionals, shell expansion, or recursive substitutions.
 - Do not put credentials in bindings. Keep secrets in their existing mechanism.
-- If a required consumer/network relationship is missing, report the blocker instead of modifying Compose. A manifest with endpoints but no bindings can still be valid.
+- If a required consumer/network relationship is missing, report the blocker instead of modifying Compose. An endpoint without bindings is valid, but that must follow from the address inventory, never from an unexamined omission.
 
 ## 7. Write and validate
 
@@ -245,13 +270,15 @@ Update `trocker.yaml` with the same `version: 1` and the verified top-level Comp
 
 Then validate in this order:
 
-1. If the workspace has not been registered yet, run `trocker init` again. It validates the existing manifest and preserves any existing UUID. If you are unsure, `trocker plan` reporting that the workspace is not registered is the signal to run init.
+1. If the workspace has not been registered yet, run `trocker init` again. It validates the existing manifest and preserves any existing UUID. If you are unsure, `trocker plan` reporting that the workspace is not registered is the signal to run init. Use the digest form from step 2 when no terminal is available.
 2. Run the read-only checks:
    ```sh
    trocker doctor
    trocker plan
    ```
    `doctor` and `plan` share the same isolation, binding, and ownership checks. `plan` also shows the workspace/project name, isolated resources, selected services, writable mounts, build contexts, Docker API access, host access, and ports that need coordination.
+
+   `plan` renders host references as `<allocated-at-startup>` and prints no resolved container values, so it proves that the wiring parses, not that it targets the right address. Re-read every binding against the step 6 inventory; a binding that names the wrong key or alias still passes.
 3. Fix only `trocker.yaml` when validation reports a manifest problem. If validation reports an unregistered workspace or a target that is not associated, run `trocker init` and confirm. If it reports an undeclared writable bind mount, a shared host path, or a build context, return to step 4 and confirm the path with the user; report it as a blocker when a shared path contains the checkout or when a build context is a `service:` reference or remote. If it reports Docker socket access or host access, return to the corresponding subsection in step 4 and confirm the service and grant with the user. If it reports an ambiguous move, a missing marker, a foreign resource, or an unsupported Compose feature, stop and report the exact blocker. Do not work around it by deleting state or rewriting Compose.
 4. Re-run `trocker doctor` and `trocker plan` until both pass.
 
@@ -274,8 +301,9 @@ Report concisely:
 
 - the Compose hierarchy and which files are top-level in the manifest;
 - endpoints, bindings, writable host paths, Docker socket services, and host access grants added, with the reason for each;
+- the address inventory from step 6, including every key deliberately left unbound and why;
 - the result of `trocker init`, `trocker doctor`, and `trocker plan`;
-- any assumptions, omitted ambiguous bindings, or blockers;
+- any assumptions or blockers;
 - the next command the user should run, normally `trocker up --detach`.
 
 ## Completion checklist
@@ -285,7 +313,8 @@ Report concisely:
 - [ ] `compose:` lists the correct top-level files in order; includes/extends are not listed.
 - [ ] Every included/overridden file and active service has been reviewed.
 - [ ] Every endpoint uses an active service and a declared TCP container port.
-- [ ] Every binding matches a real runtime consumer and a supported address reference.
+- [ ] Every address-bearing environment key in the project is bound, deliberately left unbound with a reason, or reported as a blocker.
+- [ ] Every binding matches a real runtime consumer and a supported address reference, and is repeated for each service that `extends` a bound consumer.
 - [ ] Every writable bind mount is declared in `read_write_paths` after user confirmation, or is a Docker socket handled through `docker_socket_services`, or is reported as a blocker.
 - [ ] Every service with Docker API access is declared in `docker_socket_services` after user confirmation.
 - [ ] Every host PID/IPC, capability, and device grant is declared in `host_access` after user confirmation.
