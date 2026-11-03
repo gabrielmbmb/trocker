@@ -19,7 +19,8 @@ type WritableMount struct {
 	Shared  bool
 }
 
-// WritableMounts lists declared writable bind mounts in service order.
+// WritableMounts lists declared writable bind mounts, shared host paths
+// included, in service order.
 func (r PlanResult) WritableMounts() []WritableMount {
 	var mounts []WritableMount
 	for _, name := range r.Project.ServiceNames() {
@@ -57,17 +58,6 @@ func (r PlanResult) BuildContexts() []BuildContext {
 		}
 	}
 	return contexts
-}
-
-// SharedWritableMounts counts writable mounts whose source is outside the checkout.
-func (r PlanResult) SharedWritableMounts() int {
-	shared := 0
-	for _, mount := range r.WritableMounts() {
-		if mount.Shared {
-			shared++
-		}
-	}
-	return shared
 }
 
 // DockerAPIAccess is a service that can reach the Docker daemon. Source is the

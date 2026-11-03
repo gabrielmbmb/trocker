@@ -88,7 +88,4 @@ func TestPlanReportsSharedWritableMounts(t *testing.T) {
 	if len(mounts) != 2 || mounts[0].Shared || !mounts[1].Shared {
 		t.Fatalf("writable mounts = %#v", mounts)
 	}
-	if shared := result.SharedWritableMounts(); shared != 1 {
-		t.Fatalf("shared mounts = %d, want 1", shared)
-	}
 }

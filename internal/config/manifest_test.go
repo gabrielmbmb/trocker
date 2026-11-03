@@ -359,39 +359,36 @@ func TestLoadResolvesAndConfinesSharedWritePaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	if err := os.MkdirAll(filepath.Join(home, ".aws", "sso", "cache"), 0o700); err != nil {
+	checkout := filepath.Join(home, "workspace", "checkout")
+	if err := os.MkdirAll(checkout, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		name  string
-		value string
-		want  string
-		field string
+		name    string
+		value   string
+		want    string
+		problem string
 	}{
 		{name: "home relative", value: "~/.aws/sso/cache", want: filepath.Join(home, ".aws", "sso", "cache")},
-		{name: "absolute", value: filepath.Join(home, "tmp"), want: filepath.Join(home, "tmp")},
-		{name: "home directory", value: "'~'", field: "shared_write_paths[0]"},
-		{name: "filesystem root", value: string(filepath.Separator), field: "shared_write_paths[0]"},
-		{name: "named home", value: "~other/.aws", field: "shared_write_paths[0]"},
-		{name: "relative", value: "cache", field: "shared_write_paths[0]"},
-		{name: "inside checkout", value: ".", field: "shared_write_paths[0]"},
-		{name: "contains checkout", value: home, field: "shared_write_paths[0]"},
+		{name: "absolute", value: filepath.Join(home, "cache"), want: filepath.Join(home, "cache")},
+		{name: "home directory", value: "'~'", problem: "not the home directory itself"},
+		{name: "filesystem root", value: string(filepath.Separator), problem: "below the filesystem root"},
+		{name: "named home", value: "~other/.aws", problem: "named home directories are not supported"},
+		{name: "relative", value: "cache", problem: "expected ~/ or an absolute path"},
+		{name: "inside checkout", value: filepath.Join(checkout, "data"), problem: "use read_write_paths for checkout paths"},
+		{name: "contains checkout", value: filepath.Dir(checkout), problem: "does not contain the checkout"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			directory := filepath.Join(home, "checkout")
-			if err := os.MkdirAll(directory, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			manifestPath := filepath.Join(directory, "trocker.yaml")
+			manifestPath := filepath.Join(checkout, "trocker.yaml")
 			content := "version: 1\ncompose: [compose.yaml]\nshared_write_paths:\n  - " + test.value + "\n"
 			if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			manifest, err := config.Load(manifestPath)
-			if test.field != "" {
+			if test.problem != "" {
 				var validation *config.Error
-				if !errors.As(err, &validation) || !strings.HasPrefix(validation.Field, test.field) {
-					t.Fatalf("error = %v, want config error at %s", err, test.field)
+				if !errors.As(err, &validation) || validation.Field != "shared_write_paths[0]" || !strings.Contains(validation.Problem, test.problem) {
+					t.Fatalf("error = %v, want %q at shared_write_paths[0]", err, test.problem)
 				}
 				return
 			}
@@ -417,29 +414,5 @@ func TestLoadRejectsDuplicateSharedWritePaths(t *testing.T) {
 	var validation *config.Error
 	if !errors.As(err, &validation) || validation.Field != "shared_write_paths" {
 		t.Fatalf("error = %v, want duplicate rejection", err)
-	}
-}
-
-func TestAllowsSharedWriteCoversDeclaredPathsOnly(t *testing.T) {
-	t.Parallel()
-	directory := t.TempDir()
-	manifestPath := filepath.Join(directory, "trocker.yaml")
-	content := "version: 1\ncompose: [compose.yaml]\nshared_write_paths: [/var/cache]\n"
-	if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := config.Load(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for source, want := range map[string]bool{
-		"/var/cache":         true,
-		"/var/cache/nested":  true,
-		"/var/cache-sibling": false,
-		"/var/lib":           false,
-	} {
-		if got := manifest.AllowsSharedWrite(source); got != want {
-			t.Fatalf("AllowsSharedWrite(%s) = %v, want %v", source, got, want)
-		}
 	}
 }

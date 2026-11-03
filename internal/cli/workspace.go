@@ -168,13 +168,14 @@ func runPlan(command *cobra.Command, _ []string) error {
 			fmt.Fprintf(&message, "    Build tag: %s\n", service.Image)
 		}
 		for _, mount := range mounts {
+			if mount.Service != name {
+				continue
+			}
 			label := "Writable mount"
 			if mount.Shared {
 				label = "Shared writable mount"
 			}
-			if mount.Service == name {
-				fmt.Fprintf(&message, "    %s: %s -> %s\n", label, mount.Source, mount.Target)
-			}
+			fmt.Fprintf(&message, "    %s: %s -> %s\n", label, mount.Source, mount.Target)
 		}
 		for _, context := range buildContexts {
 			if context.Service == name {
@@ -199,14 +200,17 @@ func runPlan(command *cobra.Command, _ []string) error {
 		}
 	}
 	if len(mounts) > 0 {
-		fmt.Fprintf(&message, "\n%d writable mounts; containers can modify these host paths.\n", len(mounts))
-	}
-	switch shared := result.SharedWritableMounts(); shared {
-	case 0:
-	case 1:
-		message.WriteString("1 of them is outside the checkout; writes are shared with the host and other workspaces.\n")
-	default:
-		fmt.Fprintf(&message, "%d of them are outside the checkout; writes are shared with the host and other workspaces.\n", shared)
+		shared := 0
+		for _, mount := range mounts {
+			if mount.Shared {
+				shared++
+			}
+		}
+		note := ""
+		if shared > 0 {
+			note = fmt.Sprintf(" (%d shared with the host and other workspaces)", shared)
+		}
+		fmt.Fprintf(&message, "\n%d writable mounts; containers can modify these host paths%s.\n", len(mounts), note)
 	}
 	if len(access) > 0 {
 		message.WriteString("\nDocker API access is not workspace-scoped; those containers can control the Docker daemon.\n")

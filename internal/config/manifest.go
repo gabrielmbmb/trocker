@@ -135,11 +135,8 @@ func (m *Manifest) resolveSharedWritePaths() ([]string, error) {
 	for i, path := range m.SharedWritePaths {
 		field := fmt.Sprintf("shared_write_paths[%d]", i)
 		path = strings.TrimSpace(path)
-		if path == "~" {
-			return nil, invalid(field, "expected a path below the home directory, not the home directory itself")
-		}
-		if rest, ok := strings.CutPrefix(path, "~/"); ok {
-			path = filepath.Join(home, rest)
+		if path == "~" || strings.HasPrefix(path, "~/") {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 		} else if strings.HasPrefix(path, "~") {
 			return nil, invalid(field, "expected ~/ or an absolute path; named home directories are not supported")
 		}
@@ -170,19 +167,14 @@ func (m *Manifest) Inside(path string) bool { return Inside(m.Directory, path) }
 
 // AllowsWrite reports whether a bind mount source may be mounted writable.
 // Callers must pass a clean absolute path, which Compose produces.
-func (m *Manifest) AllowsWrite(source string) bool {
-	for _, path := range m.ReadWritePaths {
-		if Inside(path, source) {
-			return true
-		}
-	}
-	return false
-}
+func (m *Manifest) AllowsWrite(source string) bool { return allows(m.ReadWritePaths, source) }
 
-// AllowsSharedWrite reports whether a writable bind mount may use a host path
+// AllowsSharedWrite reports whether a writable mount may use a host path
 // outside the checkout. Callers must pass a clean absolute path.
-func (m *Manifest) AllowsSharedWrite(source string) bool {
-	for _, path := range m.SharedWritePaths {
+func (m *Manifest) AllowsSharedWrite(source string) bool { return allows(m.SharedWritePaths, source) }
+
+func allows(paths []string, source string) bool {
+	for _, path := range paths {
 		if Inside(path, source) {
 			return true
 		}
@@ -192,14 +184,7 @@ func (m *Manifest) AllowsSharedWrite(source string) bool {
 
 // AllowsBuildContext reports whether an image build may read a host path.
 // Callers must pass a clean absolute path, which Compose produces.
-func (m *Manifest) AllowsBuildContext(source string) bool {
-	for _, path := range m.BuildContexts {
-		if Inside(path, source) {
-			return true
-		}
-	}
-	return false
-}
+func (m *Manifest) AllowsBuildContext(source string) bool { return allows(m.BuildContexts, source) }
 
 // AllowsDockerSocket reports whether service may access the Docker API socket.
 func (m *Manifest) AllowsDockerSocket(service string) bool {

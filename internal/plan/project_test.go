@@ -600,25 +600,28 @@ func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
 		compose  string
 		manifest string
 		problem  string
-		bind     bool
+		readOnly bool
 	}{
 		{
 			name:     "declared external path",
 			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache']}}",
 			manifest: withPaths("/var/cache/shared"),
-			bind:     true,
 		},
 		{
 			name:     "nested under declared external path",
 			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared/nested:/cache']}}",
 			manifest: withPaths("/var/cache/shared"),
-			bind:     true,
 		},
 		{
 			name:     "long syntax",
 			compose:  "services: {api: {image: busybox, volumes: [{type: bind, source: /var/cache/shared, target: /cache}]}}",
 			manifest: withPaths("/var/cache/shared"),
-			bind:     true,
+		},
+		{
+			name:     "sibling prefix",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared-extra:/cache']}}",
+			manifest: withPaths("/var/cache/shared"),
+			problem:  "not declared in shared_write_paths",
 		},
 		{
 			name:     "undeclared external path",
@@ -630,6 +633,7 @@ func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
 			name:     "read-only external path needs no declaration",
 			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache:ro']}}",
 			manifest: undeclared,
+			readOnly: true,
 		},
 		{
 			name:     "shared path does not authorize a checkout path",
@@ -664,7 +668,10 @@ func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
 				t.Fatal(err)
 			}
 			mount := project.Services["api"].Volumes[0]
-			if !test.bind {
+			if test.readOnly {
+				if !mount.ReadOnly {
+					t.Fatalf("read-only mount was changed: %#v", mount)
+				}
 				return
 			}
 			if mount.Bind == nil || bool(mount.Bind.CreateHostPath) {
