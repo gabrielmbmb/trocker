@@ -100,9 +100,9 @@ Suggested shape: an optional `endpoints.<alias>.host_port`, allocated before sta
 
 ## 3. Workflow gaps for agent-driven worktrees
 
-The adopter's worktree lifecycle is agent-driven: an agent creates a worktree per task, works, and discards it. Trocker's registration model assumes a human is present for each one.
+The adopter's worktree lifecycle is agent-driven: an agent creates a worktree per task, works, and discards it. Registration, release, and inspection gaps are the ones that collide with that lifecycle; §3.1 is now resolved.
 
-### 3.1 Registration requires a terminal, per worktree
+### 3.1 Registration required a terminal, per worktree
 
 Resolved: `init --dry-run` and `init --confirm <digest>` register without a terminal. The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked; it excludes the checkout path and the workspace identity, so one approval covers every worktree that shares the configuration, while editing the manifest or switching daemons requires a new approval. Approving is still the user's decision: an agent may pass a digest the user approved, never choose one itself.
 
