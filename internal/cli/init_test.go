@@ -73,7 +73,7 @@ func TestInitProposalLeavesDigestToStdout(t *testing.T) {
 
 func TestInitRejectsConflictingFlags(t *testing.T) {
 	t.Parallel()
-	err := Run([]string{"init", "--print-proposal", "--confirm", "abc"}, "test", &bytes.Buffer{})
+	err := Run([]string{"init", "--dry-run", "--confirm", "abc"}, "test", &bytes.Buffer{})
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("conflicting flags must be a usage error, got %v", err)
 	}
@@ -86,7 +86,7 @@ func TestInitWithoutTerminalAsksForDigest(t *testing.T) {
 	if !errors.As(err, &help) {
 		t.Fatalf("expected recovery guidance, got %v", err)
 	}
-	if !strings.Contains(help.Help(), "--print-proposal") {
-		t.Fatalf("help must point at the digest path: %q", help.Help())
+	if !strings.Contains(help.Help(), "--dry-run") {
+		t.Fatalf("help must point at the dry-run path: %q", help.Help())
 	}
 }

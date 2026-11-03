@@ -16,7 +16,7 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §1 `build.additional_contexts` | Declared per manifest in `build_contexts`; only in-checkout paths, and `service:`/remote contexts stay rejected. |
 | §1.1 writable paths outside the checkout | Declared per manifest in `shared_write_paths` with `~/` expansion; never created by Docker, never owned or removed by Trocker. |
 | §3.2, §3.3, §3.8 workspace removal | Registration now tracks the worktree, not the stack. `trocker release [WORKSPACE] [--volumes]` stops what a workspace still owns from any directory and then deletes its registration; `init` sweeps registrations whose worktree Git no longer records and which own nothing; `ls --all` reports the rest as `missing`. |
-| §3.1 non-interactive registration | `init --print-proposal` reports a digest and writes nothing; `init --confirm <digest>` registers only while the proposal still matches. The digest covers the effective manifest, the Docker target, creation, and relocation, and excludes the checkout path and identity, so one approval covers every worktree with that configuration. |
+| §3.1 non-interactive registration | `init --dry-run` reports a digest and writes nothing; `init --confirm <digest>` registers only while the proposal still matches. The digest covers the effective manifest, the Docker target, creation, and relocation, and excludes the checkout path and identity, so one approval covers every worktree with that configuration. |
 
 Re-verified against the adopter with a rebuilt binary: the full declaration set loads and builds with default profiles (16 active services) and with all five profiles enabled (21 services). Removing each declaration on its own is still rejected, naming the service and the path — `read_write_paths`, `shared_write_paths`, `docker_socket_services`, `host_access`, and, once `kennedy-frontend` is active, `build_contexts`.
 
@@ -104,7 +104,7 @@ The adopter's worktree lifecycle is agent-driven: an agent creates a worktree pe
 
 ### 3.1 Registration requires a terminal, per worktree
 
-Resolved: `init --print-proposal` and `init --confirm <digest>` register without a terminal. The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked; it excludes the checkout path and the workspace identity, so one approval covers every worktree that shares the configuration, while editing the manifest or switching daemons requires a new approval. Approving is still the user's decision: an agent may pass a digest the user approved, never choose one itself.
+Resolved: `init --dry-run` and `init --confirm <digest>` register without a terminal. The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked; it excludes the checkout path and the workspace identity, so one approval covers every worktree that shares the configuration, while editing the manifest or switching daemons requires a new approval. Approving is still the user's decision: an agent may pass a digest the user approved, never choose one itself.
 
 ### 3.2 No way to unregister a workspace
 
@@ -175,7 +175,7 @@ Ordered by services unblocked per unit of design risk, not by implementation cos
 | ~~1~~ | ~~Sharing policy for writable bind mounts (§1.1)~~ | Resolved: `read_write_paths` | |
 | ~~2~~ | ~~Socket-mount opt-in with a dedicated error (§1.2)~~ | Resolved: `docker_socket_services` | |
 | ~~3~~ | ~~`unregister`/`forget` + sweep (§3.2, §3.3)~~ | Resolved: `trocker release` + `init` sweep | |
-| ~~4~~ | ~~Digest-based non-interactive `init` (§3.1)~~ | Resolved: `init --print-proposal` + `init --confirm <digest>` | |
+| ~~4~~ | ~~Digest-based non-interactive `init` (§3.1)~~ | Resolved: `init --dry-run` + `init --confirm <digest>` | |
 | 5 | Declarable host port (§2.1–§2.3) | OAuth/OIDC, CORS, WebAuthn, webhooks | Still one owner per port; fail, never fall back |
 | 6 | `ps --json` / `logs` (§3.4, §3.5) | Test and debugging recipes that currently shell out | Read-only, no locking |
 | 7 | Deny-list completeness test (§4) | Confidence in the isolation claim | None — it is a test |

@@ -24,7 +24,7 @@ Turn the current Git worktree into a usable Trocker workspace:
 - Never add a `host_access` grant without explicit confirmation. It exposes host process state, host capabilities, or devices and is not workspace-isolated. Show the exact Compose declaration and matching grant before asking.
 - Never print `.env` values, Compose environment values, secrets, generated files, or full resolved Compose configuration. List keys or use targeted queries only.
 - Do not run `trocker up`, `start`, `stop`, `down`, or `run` unless the user explicitly asks for a runtime test. `init`, `plan`, and `doctor` are the normal setup checks.
-- Do not confirm registration on the user's behalf. With a terminal, run `trocker init` and let them answer the prompt. Without one, run `trocker init --print-proposal`, show them the proposal and its digest, and pass that exact digest to `trocker init --confirm` only after they approve it. Never pipe `y`, pick a digest yourself, hand-write registration state, or edit Trocker's registry.
+- Do not confirm registration on the user's behalf. With a terminal, run `trocker init` and let them answer the prompt. Without one, run `trocker init --dry-run`, show them the proposal and its digest, and pass that exact digest to `trocker init --confirm` only after they approve it. Never pipe `y`, pick a digest yourself, hand-write registration state, or edit Trocker's registry.
 - Do not delete or reset Trocker state to clear a registration, ownership, or move error. Preserve it and report the recovery requirement.
 - Keep changes scoped. Do not rewrite an existing valid manifest with a fresh minimal one.
 - Ask before installing Trocker or changing the user's toolchain. Never install it silently.
@@ -62,7 +62,7 @@ Run it in a real terminal or PTY. The user must see the proposal and confirm it.
 Without a terminal, the same confirmation is available as a digest, and the agent still does not approve it:
 
 ```sh
-trocker init --print-proposal   # prints the proposal and a digest; writes nothing
+trocker init --dry-run          # reports the proposal and a digest; writes nothing
 trocker init --confirm <digest> # registers only while that proposal still matches
 ```
 

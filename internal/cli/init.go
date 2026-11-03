@@ -22,7 +22,7 @@ func newInitCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  runInit,
 	}
-	command.Flags().Bool("print-proposal", false, "Print the proposal and its digest without writing anything")
+	command.Flags().BoolP("dry-run", "n", false, "Report the proposal and its digest without writing anything")
 	command.Flags().String("confirm", "", "Register this workspace when the proposal still matches this digest")
 	return command
 }
@@ -35,7 +35,7 @@ func (terminalError) Error() string {
 }
 
 func (terminalError) Help() string {
-	return "run init --print-proposal, review the proposal, then run init --confirm <digest>"
+	return "run init --dry-run, review the proposal, then run init --confirm <digest>"
 }
 
 // digestError rejects a confirmation captured against a different proposal.
@@ -46,11 +46,11 @@ func (digestError) Error() string {
 }
 
 func (digestError) Help() string {
-	return "run init --print-proposal to review the current proposal and confirm its digest"
+	return "run init --dry-run to review the current proposal and confirm its digest"
 }
 
 func runInit(command *cobra.Command, _ []string) error {
-	printProposal, err := command.Flags().GetBool("print-proposal")
+	dryRun, err := command.Flags().GetBool("dry-run")
 	if err != nil {
 		return err
 	}
@@ -58,10 +58,10 @@ func runInit(command *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if printProposal && digest != "" {
-		return fmt.Errorf("%w: --print-proposal cannot be combined with --confirm", ErrUsage)
+	if dryRun && digest != "" {
+		return fmt.Errorf("%w: --dry-run cannot be combined with --confirm", ErrUsage)
 	}
-	if digest == "" && !printProposal {
+	if digest == "" && !dryRun {
 		if _, terminal := term.GetFdInfo(command.InOrStdin()); !terminal {
 			return terminalError{}
 		}
@@ -76,7 +76,7 @@ func runInit(command *cobra.Command, _ []string) error {
 	}
 	store := state.Store{Directory: stateDirectory}
 
-	if printProposal {
+	if dryRun {
 		proposal, err := lifecycle.PrepareInit(command.Context(), directory, store)
 		if err != nil {
 			return err
