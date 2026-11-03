@@ -150,11 +150,19 @@ func TestInitDigestApprovalCoversAnotherWorktree(t *testing.T) {
 	if err != nil || len(registry.Workspaces) != 1 {
 		t.Fatalf("approval did not register the second worktree: %+v %v", registry, err)
 	}
-
-	// Editing the approved configuration must invalidate the same digest.
-	if err := os.WriteFile(filepath.Join(other, "trocker.yaml"), []byte("version: 1\ncompose: [compose.yaml]\nread_write_paths: [.]\n"), 0o600); err != nil {
+	registered, err := filepath.EvalSymlinks(registry.Workspaces[0].Checkout.Root)
+	if err != nil {
 		t.Fatal(err)
 	}
+	expected, err := filepath.EvalSymlinks(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registered != expected {
+		t.Fatalf("approval registered %s, want %s", registered, expected)
+	}
+
+	// Editing the approved configuration must invalidate the same digest.
 	third := filepath.Join(directory, "third")
 	git(t, main, "worktree", "add", "--detach", third, "HEAD")
 	if err := os.WriteFile(filepath.Join(third, "trocker.yaml"), []byte("version: 1\ncompose: [compose.yaml]\nread_write_paths: [.]\n"), 0o600); err != nil {

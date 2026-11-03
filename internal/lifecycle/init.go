@@ -42,12 +42,12 @@ var ErrDeclined = errors.New("initialization not confirmed; nothing written")
 // initDigestVersion invalidates digests captured against an older proposal shape.
 const initDigestVersion = "trocker-init-1"
 
-// initDigest covers what a registration approval actually decides: the effective
+// digest covers what a registration approval actually decides: the effective
 // manifest, the Docker target, and whether a moved checkout is relinked. The
 // checkout path and the workspace identity are deliberately excluded, so an
 // approval of a configuration applies to every worktree that uses it. Editing
 // the manifest or switching daemons changes the digest and needs a new approval.
-func initDigest(manifest []byte, creating bool, targetID, targetHost string, moved bool) string {
+func (p InitProposal) digest(manifest []byte, creating bool) string {
 	var canonical strings.Builder
 	write := func(value string) {
 		canonical.WriteString(strconv.Itoa(len(value)))
@@ -61,9 +61,9 @@ func initDigest(manifest []byte, creating bool, targetID, targetHost string, mov
 		write("keep")
 	}
 	write(string(manifest))
-	write(targetID)
-	write(targetHost)
-	if moved {
+	write(p.TargetID)
+	write(p.TargetHost)
+	if p.Moved {
 		write("moved")
 	}
 	sum := sha256.Sum256([]byte(canonical.String()))
@@ -132,8 +132,8 @@ func prepareInit(ctx context.Context, directory string, store state.Store) (prep
 	proposal := InitProposal{
 		Checkout: checkout, TargetID: target.ID, TargetHost: target.Host,
 		Moved: moved, NewTarget: true, Manifest: proposed,
-		Digest: initDigest(effective, creating, target.ID, target.Host, moved),
 	}
+	proposal.Digest = proposal.digest(effective, creating)
 	if index >= 0 {
 		existing := registry.Workspaces[index]
 		proposal.ExistingID = existing.ID

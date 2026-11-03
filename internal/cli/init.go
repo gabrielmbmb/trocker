@@ -77,15 +77,7 @@ func runInit(command *cobra.Command, _ []string) error {
 	store := state.Store{Directory: stateDirectory}
 
 	if dryRun {
-		proposal, err := lifecycle.PrepareInit(command.Context(), directory, store)
-		if err != nil {
-			return err
-		}
-		if err := writeInitProposal(command.ErrOrStderr(), proposal, false); err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(command.OutOrStdout(), proposal.Digest)
-		return err
+		return reportInitProposal(command, directory, store)
 	}
 
 	result, err := lifecycle.Init(command.Context(), directory, store, func(proposal lifecycle.InitProposal) (bool, error) {
@@ -107,10 +99,24 @@ func runInit(command *cobra.Command, _ []string) error {
 	return err
 }
 
+// reportInitProposal shows what registration would change without writing it.
+func reportInitProposal(command *cobra.Command, directory string, store state.Store) error {
+	proposal, err := lifecycle.PrepareInit(command.Context(), directory, store)
+	if err != nil {
+		return err
+	}
+	if err := writeInitProposal(command.ErrOrStderr(), proposal, false); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(command.OutOrStdout(), proposal.Digest)
+	return err
+}
+
 func writeInitProposal(out io.Writer, proposal lifecycle.InitProposal, prompt bool) error {
 	var message strings.Builder
+	creating := len(proposal.Manifest) > 0
 	fmt.Fprintf(&message, "Initialize workspace\n\n  Checkout   %s\n  Docker     %s\n", proposal.Checkout.Root, proposal.TargetHost)
-	if len(proposal.Manifest) > 0 {
+	if creating {
 		message.WriteString("  Config     create trocker.yaml\n")
 	} else {
 		message.WriteString("  Config     keep trocker.yaml unchanged\n")
@@ -124,14 +130,14 @@ func writeInitProposal(out io.Writer, proposal lifecycle.InitProposal, prompt bo
 	if proposal.Moved {
 		message.WriteString("  Location   update registered checkout path\n")
 	}
-	if len(proposal.Manifest) > 0 {
+	if creating {
 		message.WriteString("\nProposed trocker.yaml\n\n")
 		for line := range strings.SplitSeq(strings.TrimSuffix(string(proposal.Manifest), "\n"), "\n") {
 			fmt.Fprintf(&message, "  %s\n", line)
 		}
 	}
 	if prompt {
-		if len(proposal.Manifest) > 0 {
+		if creating {
 			message.WriteString("\nCreate configuration and register this workspace? [y/N] ")
 		} else {
 			message.WriteString("\nConfirm workspace registration? [y/N] ")

@@ -50,10 +50,10 @@ func TestInitProposalShowsChangesBeforeConfirmation(t *testing.T) {
 	}
 }
 
-func TestInitProposalLeavesDigestToStdout(t *testing.T) {
+func TestInitProposalOmitsDigestAndPrompt(t *testing.T) {
 	t.Parallel()
-	// The digest is a result, so it is written once on stdout rather than repeated
-	// inside the stderr proposal a human reviews.
+	// Without a terminal there is nobody to answer a prompt, and the digest is
+	// reported once on stdout rather than repeated inside the proposal.
 	proposal := lifecycle.InitProposal{
 		Checkout:   workspace.Checkout{Root: "/checkout"},
 		TargetHost: "unix:///docker.sock",
@@ -86,7 +86,9 @@ func TestInitWithoutTerminalAsksForDigest(t *testing.T) {
 	if !errors.As(err, &help) {
 		t.Fatalf("expected recovery guidance, got %v", err)
 	}
-	if !strings.Contains(help.Help(), "--dry-run") {
-		t.Fatalf("help must point at the dry-run path: %q", help.Help())
+	for _, want := range []string{"--dry-run", "--confirm"} {
+		if !strings.Contains(help.Help(), want) {
+			t.Fatalf("help must name %s: %q", want, help.Help())
+		}
 	}
 }
