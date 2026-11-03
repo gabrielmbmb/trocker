@@ -100,7 +100,7 @@ Trocker supports **local Docker targets, ordinary Compose bridge networking, and
 Not every Compose project is supported unchanged. Trocker rejects unsafe sharing and unsupported features, including:
 
 - Remote targets, UDP/IPv6 publications, and nonstandard network modes.
-- External or explicitly named networks/volumes, undeclared writable bind mounts, and custom network addressing/drivers.
+- External or explicitly named networks/volumes, undeclared writable bind mounts, undeclared Docker socket access, and custom network addressing/drivers.
 - Explicit anonymous mounts, deploy/replication settings, hooks/providers, privileged/device/namespace access, and advanced build access/tags.
 - User-declared Compose secrets, configs, and models. Trocker's generated files are supported separately.
 
@@ -112,6 +112,15 @@ read_write_paths:
 ```
 
 `plan` lists each writable mount before `up` runs, and an undeclared mount fails with the path that needs declaring. Read-only bind mounts need no declaration.
+
+Docker API access is opt-in per service. List services that may mount the Docker socket, or use Compose's `use_api_socket`, under `docker_socket_services`:
+
+```yaml
+docker_socket_services:
+  - localstack
+```
+
+The socket does not belong in `read_write_paths`. A socket mount from an unlisted service fails before `up` and names the service to add. Socket access is not workspace-scoped: those containers can control the Docker daemon and resources belonging to other workspaces.
 
 Built service names must be lowercase. The setup skill reports blockers rather than silently rewriting your Compose project. `trocker doctor` checks the supported subset; it is not a general security audit.
 

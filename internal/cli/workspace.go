@@ -157,6 +157,7 @@ func runPlan(command *cobra.Command, _ []string) error {
 		message.WriteString("Isolation, binding, and ownership checks passed.\n\n")
 	}
 	mounts := result.WritableMounts()
+	access := result.DockerAPIAccess()
 	fmt.Fprintf(&message, "Workspace plan\n\n  Workspace  %s\n  Project    %s\n  Networks   %d isolated\n  Volumes    %d retained, isolated\n\n", result.Registration.ID, result.Project.Name, len(result.Project.Networks), len(result.Project.Volumes))
 	for _, name := range result.Project.ServiceNames() {
 		service := result.Project.Services[name]
@@ -169,9 +170,22 @@ func runPlan(command *cobra.Command, _ []string) error {
 				fmt.Fprintf(&message, "    Writable mount: %s -> %s\n", mount.Source, mount.Target)
 			}
 		}
+		for _, item := range access {
+			if item.Service != name {
+				continue
+			}
+			if item.Source == "" {
+				message.WriteString("    Docker API: use_api_socket\n")
+			} else {
+				fmt.Fprintf(&message, "    Docker API: %s\n", item.Source)
+			}
+		}
 	}
 	if len(mounts) > 0 {
 		fmt.Fprintf(&message, "\n%d writable mounts; containers can modify these host paths.\n", len(mounts))
+	}
+	if len(access) > 0 {
+		message.WriteString("\nDocker API access is not workspace-scoped; those containers can control the Docker daemon.\n")
 	}
 	if result.ContainerFiles > 0 {
 		fmt.Fprintf(&message, "\n%d container templates checked; rendered content is validated by up.\n", result.ContainerFiles)

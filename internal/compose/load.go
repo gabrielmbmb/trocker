@@ -61,7 +61,7 @@ func LoadForPlan(ctx context.Context, path string) (*config.Manifest, *types.Pro
 	var patterns []loader.UnsupportedAttributePattern
 	for _, path := range []tree.Path{
 		"networks.*.name", "volumes.*.name", "secrets", "configs", "models", "jobs",
-		"services.*.privileged", "services.*.devices", "services.*.device_cgroup_rules", "services.*.cap_add", "services.*.pid", "services.*.ipc", "services.*.uts", "services.*.cgroup", "services.*.use_api_socket", "services.*.volumes_from", "services.*.external_links", "services.*.provider", "services.*.models", "services.*.pre_start", "services.*.post_start", "services.*.pre_stop", "services.*.develop", "services.*.deploy", "services.*.secrets", "services.*.configs",
+		"services.*.privileged", "services.*.devices", "services.*.device_cgroup_rules", "services.*.cap_add", "services.*.pid", "services.*.ipc", "services.*.uts", "services.*.cgroup", "services.*.volumes_from", "services.*.external_links", "services.*.provider", "services.*.models", "services.*.pre_start", "services.*.post_start", "services.*.pre_stop", "services.*.develop", "services.*.deploy", "services.*.secrets", "services.*.configs",
 		"services.*.build.tags", "services.*.build.network", "services.*.build.privileged", "services.*.build.entitlements", "services.*.build.ssh", "services.*.build.secrets", "services.*.build.additional_contexts",
 	} {
 		patterns = append(patterns, loader.UnsupportedAttributePattern{Path: path})

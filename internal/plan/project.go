@@ -150,11 +150,21 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	if service.Scale != nil && *service.Scale != 1 {
 		return fmt.Errorf("replicated services are not supported")
 	}
+	if service.UseAPISocket && !manifest.AllowsDockerSocket(service.Name) {
+		return newSocketError(service.Name, "")
+	}
 	for _, mount := range service.Volumes {
 		switch mount.Type {
 		case types.VolumeTypeBind:
-			if !mount.ReadOnly && !manifest.AllowsWrite(filepath.Clean(mount.Source)) {
-				return newWriteError(manifest, filepath.Clean(mount.Source))
+			source := filepath.Clean(mount.Source)
+			if ExposesDockerSocket(source) {
+				if !manifest.AllowsDockerSocket(service.Name) {
+					return newSocketError(service.Name, source)
+				}
+				continue
+			}
+			if !mount.ReadOnly && !manifest.AllowsWrite(source) {
+				return newWriteError(manifest, source)
 			}
 		case types.VolumeTypeVolume:
 			if mount.Source == "" {
@@ -200,6 +210,54 @@ func isolateService(service *types.ServiceConfig, registration workspace.Registr
 	}
 	service.Ports = ports
 	return nil
+}
+
+// ExposesDockerSocket reports whether a bind source is a Docker API socket or
+// a directory containing one. A read-only mount does not prevent connecting to
+// a socket, so both modes grant API access. Matching is lexical; symlinks are
+// not resolved.
+func ExposesDockerSocket(source string) bool {
+	source = filepath.Clean(source)
+	if filepath.Base(source) == "docker.sock" {
+		return true
+	}
+	for _, socket := range []string{"/var/run/docker.sock", "/run/docker.sock"} {
+		if inside(source, socket) {
+			return true
+		}
+	}
+	return false
+}
+
+// inside reports whether path is root or a descendant of root.
+func inside(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+// socketError rejects Docker API access that the manifest does not grant.
+type socketError struct {
+	service string
+	source  string
+}
+
+func newSocketError(service, source string) error {
+	return &socketError{service: service, source: source}
+}
+
+func (e *socketError) Error() string {
+	if e.source == "" {
+		return "use_api_socket is not declared in docker_socket_services"
+	}
+	return "Docker API access through " + e.source + " is not declared in docker_socket_services"
+}
+
+func (e *socketError) Help() string {
+	return "add " + e.service + " under docker_socket_services in trocker.yaml, or remove the Docker socket access"
+}
+
+func (e *socketError) Note() string {
+	return "Docker API access is not limited to this workspace and can control other containers"
 }
 
 // writeError rejects a writable bind mount that no declared path allows.

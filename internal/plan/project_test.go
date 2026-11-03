@@ -190,6 +190,108 @@ func TestWritableMountsRequireDeclaredPaths(t *testing.T) {
 	}
 }
 
+func TestDockerSocketAccessRequiresServiceOptIn(t *testing.T) {
+	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
+	withServices := func(services string) string {
+		return "version: 1\ncompose: [compose.yaml]\ndocker_socket_services: [" + services + "]\n"
+	}
+	const undeclared = "version: 1\ncompose: [compose.yaml]\n"
+	for _, test := range []struct {
+		name     string
+		compose  string
+		manifest string
+		useAPI   bool
+		problem  string
+	}{
+		{
+			name:     "declared socket",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run/docker.sock:/var/run/docker.sock']}}",
+			manifest: withServices("api"),
+		},
+		{
+			name:     "declared socket outside the conventional path",
+			compose:  "services: {api: {image: busybox, volumes: ['/run/user/1000/docker.sock:/var/run/docker.sock']}}",
+			manifest: withServices("api"),
+		},
+		{
+			name:     "declared parent directory",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run:/var/run:ro']}}",
+			manifest: withServices("api"),
+		},
+		{
+			name:     "declared use_api_socket",
+			compose:  "services: {api: {image: busybox, use_api_socket: true}}",
+			manifest: withServices("api"),
+			useAPI:   true,
+		},
+		{
+			name:     "undeclared socket",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run/docker.sock:/var/run/docker.sock']}}",
+			manifest: undeclared,
+			problem:  "not declared in docker_socket_services",
+		},
+		{
+			name:     "undeclared read-only socket",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run/docker.sock:/var/run/docker.sock:ro']}}",
+			manifest: undeclared,
+			problem:  "not declared in docker_socket_services",
+		},
+		{
+			name:     "undeclared parent directory",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run:/var/run:ro']}}",
+			manifest: undeclared,
+			problem:  "not declared in docker_socket_services",
+		},
+		{
+			name:     "undeclared use_api_socket",
+			compose:  "services: {api: {image: busybox, use_api_socket: true}}",
+			manifest: undeclared,
+			problem:  "use_api_socket is not declared in docker_socket_services",
+		},
+		{
+			name:     "other service declared",
+			compose:  "services: {api: {image: busybox, volumes: ['/var/run/docker.sock:/var/run/docker.sock']}, web: {image: busybox}}",
+			manifest: withServices("web"),
+			problem:  "not declared in docker_socket_services",
+		},
+		{
+			name:     "socket opt-in is not a writable path policy",
+			compose:  "services: {api: {image: busybox, volumes: ['./data:/data', '/var/run/docker.sock:/var/run/docker.sock']}}",
+			manifest: withServices("api"),
+			problem:  "not declared in read_write_paths",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := plan.Build(manifest, source, registration, plan.Options{})
+			if test.problem != "" {
+				var help interface{ Help() string }
+				if err == nil || !strings.Contains(err.Error(), test.problem) {
+					t.Fatalf("error = %v, want %q", err, test.problem)
+				}
+				if !errors.As(err, &help) || help.Help() == "" {
+					t.Fatalf("error has no recovery guidance: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := project.Services["api"]
+			if test.useAPI {
+				if !service.UseAPISocket {
+					t.Fatal("use_api_socket was not preserved")
+				}
+			} else if len(service.Volumes) == 0 || !plan.ExposesDockerSocket(service.Volumes[0].Source) {
+				t.Fatalf("Docker socket access was not preserved: %#v", service.Volumes)
+			}
+		})
+	}
+}
+
 func TestUnsupportedConfigurationsFailBeforeMutation(t *testing.T) {
 	for name, content := range map[string]string{
 		"dependency cycle": "services: {api: {image: busybox, depends_on: [web]}, web: {image: busybox, depends_on: [api]}}",
@@ -225,5 +327,31 @@ func TestHostBindingsRequireAllocation(t *testing.T) {
 	manifest.Bindings = map[string]config.Bindings{"api": {Environment: map[string]string{"URL": "secret-{{ endpoints.api.host.url }}"}}}
 	if _, err := plan.Build(manifest, source, workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}, plan.Options{}); err == nil || strings.Contains(err.Error(), "secret-") {
 		t.Fatalf("unsupported startup binding: %v", err)
+	}
+}
+
+func TestExposesDockerSocket(t *testing.T) {
+	for _, test := range []struct {
+		source  string
+		exposes bool
+	}{
+		{source: "/var/run/docker.sock", exposes: true},
+		{source: "/run/docker.sock", exposes: true},
+		{source: "/run/user/1000/docker.sock", exposes: true},
+		{source: "/home/dev/.docker/run/docker.sock", exposes: true},
+		{source: "/var/run", exposes: true},
+		{source: "/var", exposes: true},
+		{source: "/", exposes: true},
+		{source: "/checkout/src"},
+		{source: "/var/log"},
+		{source: "/var/run-docker"},
+		{source: "/var/run/docker.sock.bak"},
+		{source: "/run/secrets"},
+	} {
+		t.Run(test.source, func(t *testing.T) {
+			if got := plan.ExposesDockerSocket(test.source); got != test.exposes {
+				t.Fatalf("ExposesDockerSocket(%q) = %v, want %v", test.source, got, test.exposes)
+			}
+		})
 	}
 }

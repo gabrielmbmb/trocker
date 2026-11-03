@@ -5,6 +5,11 @@ import "github.com/compose-spec/compose-go/v2/types"
 // ValidateProject checks Trocker references against the SDK's active model.
 // Runtime reachability, identity injection and isolation policy belong to planning.
 func (m *Manifest) ValidateProject(project *types.Project) error {
+	for _, service := range m.DockerSocketServices {
+		if _, exists := project.Services[service]; !exists {
+			return invalid("docker_socket_services", "service "+service+" is missing or inactive")
+		}
+	}
 	for name, endpoint := range m.Endpoints {
 		service, exists := project.Services[endpoint.Service]
 		if !exists {

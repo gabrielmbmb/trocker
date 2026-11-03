@@ -70,6 +70,45 @@ func TestValidateProjectEndpointDeclarations(t *testing.T) {
 	}
 }
 
+func TestValidateProjectDockerSocketServicesRequireActiveService(t *testing.T) {
+	t.Parallel()
+	project := func() *types.Project {
+		return &types.Project{
+			Services:         types.Services{"localstack": {Name: "localstack"}},
+			DisabledServices: types.Services{"dozzle": {Name: "dozzle"}},
+		}
+	}
+	for _, test := range []struct {
+		name    string
+		service string
+		valid   bool
+	}{
+		{name: "active service", service: "localstack", valid: true},
+		{name: "inactive service", service: "dozzle"},
+		{name: "missing service", service: "missing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			actual, before := project(), project()
+			manifest := config.Manifest{DockerSocketServices: []string{test.service}}
+			err := manifest.ValidateProject(actual)
+			if !reflect.DeepEqual(actual, before) {
+				t.Fatal("validation changed the Compose project")
+			}
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var validation *config.Error
+			if !errors.As(err, &validation) || validation.Field != "docker_socket_services" {
+				t.Fatalf("error = %v, want missing/inactive Docker socket service", err)
+			}
+		})
+	}
+}
+
 func TestValidateProjectBindingsRequireActiveServiceWithoutEndpoints(t *testing.T) {
 	t.Parallel()
 	project := &types.Project{

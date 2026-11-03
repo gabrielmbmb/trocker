@@ -9,11 +9,12 @@ version: 1
 compose:
   - compose.yaml
 read_write_paths: []
+docker_socket_services: []
 endpoints: {}
 bindings: {}
 ```
 
-`read_write_paths`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`read_write_paths`, `docker_socket_services`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -70,7 +71,24 @@ read_write_paths:
 - Undeclared writable mounts fail before mutation, naming the path to declare.
 - `plan` and `doctor` list every writable mount, because containers can modify those host paths once `up` runs.
 
-External host paths, such as a Docker socket or a home-directory cache, cannot be declared here. They are separate unsupported features.
+External host paths, such as a home-directory cache, cannot be declared here. Docker sockets use `docker_socket_services` instead.
+
+### `docker_socket_services`
+
+Optional list of active Compose service names that may access the Docker API socket.
+
+```yaml
+docker_socket_services:
+  - localstack
+```
+
+- A listed service is accepted when it mounts a Docker socket or sets Compose `use_api_socket: true`. A Docker socket is a bind source named `docker.sock`, or a mount of the conventional socket paths (`/var/run/docker.sock`, `/run/docker.sock`) or a parent directory of those. Detection is lexical; a socket reached through a differently named path or a symlink is not recognized.
+- Read-only socket mounts need the same declaration; mount mode does not prevent connecting to the socket.
+- The socket path does not belong in `read_write_paths`, and this list does not authorize any other host path.
+- Undeclared access fails before mutation and names the service to add.
+- Docker API access is host-level: the service can control the daemon and resources outside this workspace. Add entries only after confirming the need.
+
+External host paths other than Docker sockets still cannot be declared.
 
 ### `endpoints`
 
@@ -207,7 +225,8 @@ Rejected by the isolation planner or loader checks:
 - Anonymous service volumes and writable bind mounts that `read_write_paths` does not declare. Read-only bind mounts are supported.
 - Replicated services (`scale` other than 1) and deploy/replication settings.
 - Compose `secrets`, `configs`, and `models`.
-- Privileged services, devices, device cgroup rules, added capabilities, PID/IPC/UTS/cgroup namespaces, socket use, `volumes_from`, and `external_links`.
+- Privileged services, devices, device cgroup rules, added capabilities, PID/IPC/UTS/cgroup namespaces, `volumes_from`, and `external_links`.
+- Docker socket access not declared in `docker_socket_services`, whether through a bind mount or Compose `use_api_socket`.
 - Pre/post-start/stop hooks, providers, `develop`, and jobs.
 - Advanced build access: build tags, network, privileged mode, entitlements, SSH, secrets, and additional contexts.
 - Explicit ownership labels that conflict with Trocker's labels, and explicit `TROCKER_WORKSPACE_ID` values that conflict with the registered identity.

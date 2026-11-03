@@ -7,18 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
 )
 
 type Manifest struct {
-	Version        int                 `yaml:"version"`
-	Compose        []string            `yaml:"compose"`
-	ReadWritePaths []string            `yaml:"read_write_paths"`
-	Endpoints      map[string]Endpoint `yaml:"endpoints"`
-	Bindings       map[string]Bindings `yaml:"bindings"`
-	Directory      string              `yaml:"-"`
+	Version              int                 `yaml:"version"`
+	Compose              []string            `yaml:"compose"`
+	ReadWritePaths       []string            `yaml:"read_write_paths"`
+	DockerSocketServices []string            `yaml:"docker_socket_services"`
+	Endpoints            map[string]Endpoint `yaml:"endpoints"`
+	Bindings             map[string]Bindings `yaml:"bindings"`
+	Directory            string              `yaml:"-"`
 }
 
 type Endpoint struct {
@@ -123,6 +125,11 @@ func (m *Manifest) AllowsWrite(source string) bool {
 	return false
 }
 
+// AllowsDockerSocket reports whether service may access the Docker API socket.
+func (m *Manifest) AllowsDockerSocket(service string) bool {
+	return slices.Contains(m.DockerSocketServices, service)
+}
+
 // inside reports whether path is root or a descendant of root. Rel compares
 // path components, so a sibling sharing a name prefix is not contained.
 func inside(root, path string) bool {
@@ -165,6 +172,16 @@ func (m *Manifest) Validate() error {
 		if strings.TrimSpace(path) == "" {
 			return invalid(fmt.Sprintf("read_write_paths[%d]", i), "expected a nonempty host path")
 		}
+	}
+	seen := make(map[string]bool, len(m.DockerSocketServices))
+	for i, service := range m.DockerSocketServices {
+		if strings.TrimSpace(service) == "" {
+			return invalid(fmt.Sprintf("docker_socket_services[%d]", i), "expected a nonempty service name")
+		}
+		if seen[service] {
+			return invalid("docker_socket_services", "duplicate service "+service)
+		}
+		seen[service] = true
 	}
 	for name, endpoint := range m.Endpoints {
 		if !aliasPattern.MatchString(name) {

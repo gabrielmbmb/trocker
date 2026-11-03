@@ -45,6 +45,9 @@ func TestManifestValidation(t *testing.T) {
 		{"invalid environment name", base + "bindings: {web: {environment: {'BAD-NAME': value}}}", "bindings.web.environment"},
 		{"nested environment value", base + "bindings: {web: {environment: {TOKEN: [do-not-print]}}}", "manifest"},
 		{"unknown native field", base + "bindings: {web: {native: {secret: do-not-print}}}", "manifest"},
+		{"empty docker socket service", base + "docker_socket_services: ['']", "docker_socket_services[0]"},
+		{"duplicate docker socket service", base + "docker_socket_services: [api, api]", "docker_socket_services"},
+		{"scalar docker socket services", base + "docker_socket_services: api", "manifest"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -68,6 +71,7 @@ func TestParsePreservesExplicitConfiguration(t *testing.T) {
 	manifest, err := config.Parse([]byte(`
 version: 1
 compose: [base.yaml, override.yaml]
+docker_socket_services: [localstack, dozzle]
 endpoints:
   api:
     service: backend
@@ -86,9 +90,10 @@ bindings:
 		t.Fatal(err)
 	}
 	want := &config.Manifest{
-		Version:   1,
-		Compose:   []string{"base.yaml", "override.yaml"},
-		Endpoints: map[string]config.Endpoint{"api": {Service: "backend", Port: 8000, Scheme: "https"}},
+		Version:              1,
+		Compose:              []string{"base.yaml", "override.yaml"},
+		DockerSocketServices: []string{"localstack", "dozzle"},
+		Endpoints:            map[string]config.Endpoint{"api": {Service: "backend", Port: 8000, Scheme: "https"}},
 		Bindings: map[string]config.Bindings{"web": {
 			Environment: map[string]string{"URL": "{{ endpoints.api.container.url }}", "EMPTY": ""},
 			Native:      config.NativeBindings{Environment: map[string]string{"URL": "{{ endpoints.api.host.url }}"}},
