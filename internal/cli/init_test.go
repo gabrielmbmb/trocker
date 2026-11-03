@@ -79,6 +79,18 @@ func TestInitRejectsConflictingFlags(t *testing.T) {
 	}
 }
 
+func TestInitRejectsBlankDigest(t *testing.T) {
+	t.Parallel()
+	// A script passing an unset or whitespace-only variable must not fall back to
+	// prompting, and a pasted digest may arrive with surrounding space.
+	for _, digest := range []string{"", "  \n"} {
+		err := Run([]string{"init", "--confirm", digest}, "test", &bytes.Buffer{})
+		if !errors.Is(err, ErrUsage) {
+			t.Fatalf("digest %q must be a usage error, got %v", digest, err)
+		}
+	}
+}
+
 func TestInitWithoutTerminalAsksForDigest(t *testing.T) {
 	t.Parallel()
 	err := Run([]string{"init"}, "test", &bytes.Buffer{})

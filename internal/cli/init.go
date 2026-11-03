@@ -58,6 +58,11 @@ func runInit(command *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	digest = strings.TrimSpace(digest)
+	// An unset or blanked variable in a script must not degrade into a prompt.
+	if command.Flags().Changed("confirm") && digest == "" {
+		return fmt.Errorf("%w: --confirm requires a digest", ErrUsage)
+	}
 	if dryRun && digest != "" {
 		return fmt.Errorf("%w: --dry-run cannot be combined with --confirm", ErrUsage)
 	}
