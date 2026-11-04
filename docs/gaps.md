@@ -23,7 +23,7 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 
 Re-verified against the adopter with a rebuilt binary: the full declaration set loads and builds with default profiles (16 active services) and with all five profiles enabled (21 services). Removing each declaration on its own is still rejected, naming the service and the path — `read_write_paths`, `shared_write_paths`, `docker_socket_services`, `host_access`, and, once `kennedy-frontend` is active, `build_contexts`.
 
-Sections other than §3.4 and §3.5 remain unchanged. Those two preserve the original problem statement with their resolution noted.
+Sections other than §3.4–§3.6 remain unchanged. Those three preserve the original problem statement with their resolution noted.
 
 One correction to the inventory: only `kennedy-frontend` declares `additional_contexts`, and both of its values are inside the checkout; `website` and `swag` do not use it. The writable `~/.aws/sso/cache` mount used by `apollo`, `hubble`, `kennedy-api`, `kennedy-worker`, and `asset-sentinel-worker` — the residual §1.1 case, since `read_write_paths` stops at the checkout — is now expressible as `shared_write_paths`.
 
