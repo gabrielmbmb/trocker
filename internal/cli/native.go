@@ -25,11 +25,7 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			output := command.OutOrStdout()
-			// Preserve real file descriptors so children retain terminal detection.
-			if wrapper, ok := output.(*outputWriter); ok {
-				output = wrapper.Writer
-			}
+			output := rawCommandOutput(command)
 			return lifecycle.Run(command.Context(), directory, store, args[0], args[1:], native.Streams{In: command.InOrStdin(), Out: output, Err: command.ErrOrStderr()})
 		},
 	}

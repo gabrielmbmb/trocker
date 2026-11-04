@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/docker/compose/v5/pkg/api"
 	"github.com/gofrs/flock"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
@@ -38,7 +39,7 @@ func allocatePorts(ctx context.Context, store state.Store, prepared PlanResult, 
 	if len(required) == 0 {
 		return allocation, nil
 	}
-	containers, err := target.Containers(ctx, prepared.Registration)
+	containers, err := target.Containers(ctx, prepared.Registration, api.PsOptions{All: true})
 	if err != nil {
 		return allocation, err
 	}

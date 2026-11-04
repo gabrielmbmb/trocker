@@ -11,6 +11,7 @@ import (
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/api/types/container"
 
+	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/config"
 )
 
@@ -47,12 +48,7 @@ func ResolveEndpoints(definitions map[string]config.Endpoint, containers []api.C
 	endpoints := make([]Endpoint, 0, len(definitions))
 	for name, definition := range definitions {
 		endpoint := Endpoint{Name: name, Service: definition.Service, ContainerPort: definition.Port, Scheme: definition.Scheme, State: "missing", Addresses: Addresses{Container: address(definition.Service, definition.Port, definition.Scheme)}}
-		var matches []api.ContainerSummary
-		for _, ctr := range containers {
-			if ctr.Service == definition.Service && !strings.EqualFold(ctr.Labels[api.OneoffLabel], "true") {
-				matches = append(matches, ctr)
-			}
-		}
+		matches := compose.ServiceContainers(containers, definition.Service, false)
 		if len(matches) > 1 {
 			return nil, fmt.Errorf("endpoint %s has multiple service containers; replicated endpoints are not supported", name)
 		}

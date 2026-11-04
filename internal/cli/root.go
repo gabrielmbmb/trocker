@@ -11,7 +11,7 @@ func newRootCommand(version string, output io.Writer) *cobra.Command {
 	command := &cobra.Command{
 		Use:           "trocker",
 		Short:         "Isolated Docker Compose stacks per Git worktree",
-		Long:          "Trocker runs isolated Docker Compose stacks per Git worktree.\n\nInit registers a workspace; plan checks isolation; up creates and starts the stack. The ls command lists stacks and their worktrees; status and endpoints inspect the current one. Start, stop, and down manage existing resources. Release stops and forgets a workspace whose worktree is gone. Run executes a local process with native service bindings.",
+		Long:          "Trocker runs isolated Docker Compose stacks per Git worktree.\n\nInit registers a workspace; plan checks isolation; up creates and starts the stack. The ls command lists stacks and their worktrees; status, ps, and endpoints inspect the current one. The logs command reads container output, and exec runs a command in a service container. Start, stop, and down manage existing resources. Release stops and forgets a workspace whose worktree is gone. Run executes a local process with native service bindings.",
 		Version:       version,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
@@ -36,6 +36,9 @@ func newRootCommand(version string, output io.Writer) *cobra.Command {
 		newReleaseCommand(),
 		newRunCommand(),
 		newStatusCommand(),
+		newPsCommand(),
+		newLogsCommand(),
+		newExecCommand(),
 		newEndpointsCommand(),
 		newDoctorCommand(),
 		newVersionCommand(version),

@@ -40,7 +40,7 @@ func TestLifecyclePreservesIdentityAndVolumeData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestLifecyclePreservesIdentityAndVolumeData(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Stop, Services: []string{"api"}}, &progress); err != nil {
 		t.Fatal(err)
 	}
-	stopped, err := target.Containers(ctx, registration)
+	stopped, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestLifecyclePreservesIdentityAndVolumeData(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Start, Services: []string{"api"}}, &progress); err != nil {
 		t.Fatal(err)
 	}
-	started, err := target.Containers(ctx, registration)
+	started, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestLifecyclePreservesIdentityAndVolumeData(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Down}, &progress); err != nil {
 		t.Fatal(err)
 	}
-	remaining, err := target.Containers(ctx, registration)
+	remaining, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || len(remaining) != 0 {
 		t.Fatal("down retained containers", err)
 	}
@@ -273,7 +273,7 @@ func TestStartFixedPortConflictDoesNotReassign(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Down, Volumes: true}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	untouched, err := otherTarget.Containers(ctx, otherRegistration)
+	untouched, err := otherTarget.Containers(ctx, otherRegistration, api.PsOptions{All: true})
 	if err != nil || len(untouched) != 1 || untouched[0].State != container.StateRunning {
 		t.Fatal("teardown affected another project", err)
 	}
@@ -344,7 +344,7 @@ func TestDownVolumeOwnershipPreflight(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Down, Volumes: true}, io.Discard); err == nil || !strings.Contains(err.Error(), "ownership") {
 		t.Fatalf("foreign volume accepted: %v", err)
 	}
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || len(containers) != 1 || containers[0].State != container.StateRunning {
 		t.Fatal("ownership failure mutated containers", err)
 	}

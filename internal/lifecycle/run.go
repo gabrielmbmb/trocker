@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/compose/v5/pkg/api"
+
 	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/config"
 	"github.com/gabrielmbmb/trocker/internal/generated"
@@ -117,7 +119,7 @@ func observeNativeEndpoints(ctx context.Context, registration workspace.Registra
 	if err != nil {
 		return nil, "", err
 	}
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	err = errors.Join(err, target.Close())
 	if err != nil {
 		return nil, "", err

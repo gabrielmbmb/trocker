@@ -31,21 +31,3 @@ func RunContext(ctx context.Context, args []string, version string, input io.Rea
 	}
 	return err
 }
-
-// Cobra's help printer does not return write errors to Execute.
-type outputWriter struct {
-	io.Writer
-	err error
-}
-
-func (writer *outputWriter) Write(data []byte) (int, error) {
-	if writer.err != nil {
-		return 0, writer.err
-	}
-	n, err := writer.Writer.Write(data)
-	if err == nil && n < len(data) {
-		err = io.ErrShortWrite
-	}
-	writer.err = err
-	return n, err
-}

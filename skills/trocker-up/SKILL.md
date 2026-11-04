@@ -21,6 +21,8 @@ The project already has Trocker configured. Use its existing `trocker.yaml`; do 
    ```
    Report the running services, published addresses, and any failures. Use observed addresses, not guessed or remembered ports. A published endpoint alone does not prove application readiness.
 
+   For runtime debugging, use `trocker ps`, `trocker logs [SERVICE...]`, and `trocker exec SERVICE COMMAND...`. They resolve the current worktree's containers by Compose service name; do not address generated container names or fall back to raw `docker`. Use `trocker ps --json` when a script needs the project or container names.
+
 ## Safeguards
 
 - Use Trocker, not direct Compose commands, to manage this stack.

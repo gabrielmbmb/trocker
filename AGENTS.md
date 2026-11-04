@@ -23,6 +23,7 @@
 
 ## Tests
 
+- Put tests for a Go file in a sibling file named after it: `containers.go` pairs with `containers_test.go`, or `containers_integration_test.go` behind a build tag. Do not add test files that do not mirror the name of an implementation file.
 - Test Trocker's decisions and contracts: validation, transformations, ownership, retention, and failure recovery. Each test must catch a plausible bug or protect a requirement—not raise coverage for its own sake.
 - Test pure rules directly and SDK integration with real disposable resources. Do not retest library internals, mirror implementation steps, or mock SDK calls merely to verify call sequences.
 - Explicitly test safety guarantees: read-only commands do not mutate state, teardown preserves unowned resources, and errors do not expose secrets. Never use a developer's existing Docker resources as test fixtures.

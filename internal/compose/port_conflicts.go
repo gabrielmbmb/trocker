@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/containerd/errdefs"
+	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
 
 	"github.com/gabrielmbmb/trocker/internal/workspace"
@@ -20,7 +21,7 @@ func (t *Target) ConflictingPorts(ctx context.Context, registration workspace.Re
 	if !errors.As(startErr, &failure) || !errdefs.IsInternal(failure.cause) || !portBindFailure(failure.cause.Error()) {
 		return nil, nil
 	}
-	containers, err := t.Containers(ctx, registration)
+	containers, err := t.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		return nil, err
 	}

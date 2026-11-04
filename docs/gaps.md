@@ -17,10 +17,12 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §1.1 writable paths outside the checkout | Declared per manifest in `shared_write_paths` with `~/` expansion; never created by Docker, never owned or removed by Trocker. |
 | §3.2, §3.3, §3.8 workspace removal | Registration now tracks the worktree, not the stack. `trocker release [WORKSPACE] [--volumes]` stops what a workspace still owns from any directory and then deletes its registration; `init` sweeps registrations whose worktree Git no longer records and which own nothing; `ls --all` reports the rest as `missing`. |
 | §3.1 non-interactive registration | `init --dry-run` reports a digest and writes nothing; `init --confirm <digest>` registers only while the proposal still matches. The digest covers the effective manifest, the Docker target, creation, and relocation, and excludes the checkout path and identity, so one approval covers every worktree with that configuration. |
+| §3.4 no `logs` | `trocker logs [SERVICE...]` streams owned container logs without locks; `--follow`, `--tail`, `--since`, `--until`, and `--timestamps` map to the Compose log options. |
+| §3.5 no `exec`/`ps` | `trocker ps [--all] [--json]` reports the Compose project and container names, services, states, and health; `trocker exec SERVICE COMMAND...` addresses containers by service name and preserves the child exit status. |
 
 Re-verified against the adopter with a rebuilt binary: the full declaration set loads and builds with default profiles (16 active services) and with all five profiles enabled (21 services). Removing each declaration on its own is still rejected, naming the service and the path — `read_write_paths`, `shared_write_paths`, `docker_socket_services`, `host_access`, and, once `kennedy-frontend` is active, `build_contexts`.
 
-Everything below still applies. §1.4, §1.5, §2, §3.4–§3.7, §4, and §5 are unchanged by the resolutions above.
+Sections other than §3.4 and §3.5 remain unchanged. Those two preserve the original problem statement with their resolution noted.
 
 One correction to the inventory: only `kennedy-frontend` declares `additional_contexts`, and both of its values are inside the checkout; `website` and `swag` do not use it. The writable `~/.aws/sso/cache` mount used by `apollo`, `hubble`, `kennedy-api`, `kennedy-worker`, and `asset-sentinel-worker` — the residual §1.1 case, since `read_write_paths` stops at the checkout — is now expressible as `shared_write_paths`.
 
@@ -121,15 +123,13 @@ Suggested shape: `trocker forget` that refuses unless the workspace owns no cont
 
 There is nothing that reaps stacks whose worktree no longer exists. `ls` observes, it does not clean. Combined with §3.2, the failure mode is monotonically growing state that only manual `docker` work clears.
 
-### 3.4 No `logs`
+### 3.4 `logs` (resolved)
 
-`up` without `--detach` streams logs but holds the workspace mutation lock until the session ends, so tailing one service blocks every other mutating command for that workspace. There is no way to read logs from a detached stack. A `logs [SERVICE...]` command needs no allocation or locking and would remove a very routine dependency on raw `docker`.
+Resolved by `trocker logs [SERVICE...]`: it reads logs from the workspace's owned containers without allocating resources or taking the mutation lock, and supports follow, tail, since, until, and timestamps. The original blocker was that `up` without `--detach` was the only log path and held the workspace mutation lock until the session ended, so tailing one service blocked every other mutating command for that workspace.
 
-### 3.5 No `exec` or `ps`, and no documented way to address containers
+### 3.5 `exec`, `ps`, and container addressing (resolved)
 
-`container_name` is removed by design. `status` does print the resulting container names, but it has no `--json`, and no command exposes the Compose project name as a documented result. `endpoints --json` reports `workspace_id`, from which the project name (`trocker-<uuid>` minus hyphens) can be *derived*, but deriving it is not a contract. Every test recipe in the adopter resolves a container by name, so this is the difference between `docker exec <name> pytest` and a label-filtered `docker ps` dance.
-
-Suggested shape: `trocker ps --json` (container names, services, states, health) and either the project name in `endpoints --json` or a `trocker project` result. Both are read-only observations of state Trocker already has.
+Resolved by service-name addressing: `trocker exec SERVICE COMMAND...` runs in the current worktree's container and propagates its exit status, while `trocker ps --json` reports the Compose `project` alongside container names, services, states, and health. The original blocker was that `container_name` is removed by design, `status` had no `--json`, and no command exposed the Compose project name as a documented result: `endpoints --json` reports `workspace_id`, from which the project name can be *derived*, but deriving it is not a contract. Every test recipe in the adopter resolved a container by name, so this was the difference between `docker exec <name> pytest` and a label-filtered `docker ps` dance.
 
 ### 3.6 Profiles are environment-only
 
@@ -177,7 +177,7 @@ Ordered by services unblocked per unit of design risk, not by implementation cos
 | ~~3~~ | ~~`unregister`/`forget` + sweep (§3.2, §3.3)~~ | Resolved: `trocker release` + `init` sweep | |
 | ~~4~~ | ~~Digest-based non-interactive `init` (§3.1)~~ | Resolved: `init --dry-run` + `init --confirm <digest>` | |
 | 5 | Declarable host port (§2.1–§2.3) | OAuth/OIDC, CORS, WebAuthn, webhooks | Still one owner per port; fail, never fall back |
-| 6 | `ps --json` / `logs` (§3.4, §3.5) | Test and debugging recipes that currently shell out | Read-only, no locking |
+| ~~6~~ | ~~`ps --json` / `logs` / `exec` (§3.4, §3.5)~~ | Resolved: test and debugging recipes address services, not container names | No allocation or workspace mutation locks |
 | 7 | Deny-list completeness test (§4) | Confidence in the isolation claim | None — it is a test |
 | 8 | `--profile` pass-through, `deploy` subkey granularity, explicit-name rejection wording (§1.4, §1.5, §3.6) | Projects with ordinary Compose hygiene | None |
 

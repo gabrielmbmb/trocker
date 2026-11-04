@@ -5,6 +5,7 @@ package lifecycle_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -19,12 +20,14 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
+	"github.com/gabrielmbmb/trocker/internal/config"
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
 	"github.com/gabrielmbmb/trocker/internal/state"
 	"github.com/gabrielmbmb/trocker/internal/workspace"
 )
 
-const upCompose = `services:
+const (
+	upCompose = `services:
   api:
     image: busybox:1.37
     stop_grace_period: 1s
@@ -39,12 +42,21 @@ const upCompose = `services:
 volumes:
   data:
 `
+	upManifest = "version: 1\ncompose: [compose.yaml]\nendpoints:\n  api: {service: api, port: 8000, scheme: http}\n"
+)
 
 func upWorkspace(t *testing.T, ctx context.Context) (string, state.Store, workspace.Registration, *compose.Target) {
 	t.Helper()
+	return workspaceFixture(t, ctx, upCompose, upManifest)
+}
+
+// workspaceFixture writes the Compose and manifest files, registers the
+// workspace, and schedules cleanup of everything it creates.
+func workspaceFixture(t *testing.T, ctx context.Context, composeFile, manifest string) (string, state.Store, workspace.Registration, *compose.Target) {
+	t.Helper()
 	directory, main := repository(t) //nolint:contextcheck // Git fixtures use the test context; daemon operations use the shorter timeout.
 	store := state.Store{Directory: filepath.Join(directory, "state")}
-	for name, content := range map[string]string{"compose.yaml": upCompose, "trocker.yaml": "version: 1\ncompose: [compose.yaml]\nendpoints:\n  api: {service: api, port: 8000, scheme: http}\n"} {
+	for name, content := range map[string]string{"compose.yaml": composeFile, "trocker.yaml": manifest} {
 		if err := os.WriteFile(filepath.Join(main, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -94,7 +106,7 @@ func TestUpRetryIsolationAndVolumeRetention(t *testing.T) {
 		t.Fatalf("missing or decorated plain Compose progress: %q", &progress)
 	}
 	token := readEndpointToken(t, ctx, first)
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || len(containers) != 1 {
 		t.Fatalf("containers: %v %v", containers, err)
 	}
@@ -103,7 +115,7 @@ func TestUpRetryIsolationAndVolumeRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers, err = target.Containers(ctx, registration)
+	containers, err = target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +129,7 @@ func TestUpRetryIsolationAndVolumeRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers, err = target.Containers(ctx, registration)
+	containers, err = target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +163,7 @@ func TestUpBuildAndServiceSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	readEndpointToken(t, ctx, result)
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || len(containers) != 1 || containers[0].Service != "api" {
 		t.Fatalf("selection leaked: %v %v", containers, err)
 	}
@@ -316,4 +328,183 @@ func cleanupProject(t *testing.T, ctx context.Context, target *compose.Target, r
 			t.Error(err)
 		}
 	}
+}
+
+const hostAccessCompose = `services:
+  api:
+    image: busybox:1.37
+    pid: host
+    ipc: host
+    cap_add: [SYS_PTRACE]
+    devices: ['/dev/null:/dev/null:rw']
+    command: [sleep, '300']
+`
+
+func TestUpAppliesDeclaredHostAccess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	manifest := "version: 1\ncompose: [compose.yaml]\nhost_access:\n  api:\n    pid: true\n    ipc: true\n    capabilities: [SYS_PTRACE]\n    devices:\n      - source: /dev/null\n        permissions: rw\n"
+	main, store, registration, target := workspaceFixture(t, ctx, hostAccessCompose, manifest)
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
+	if err != nil || len(containers) != 1 {
+		t.Fatalf("containers: %v %v", containers, err)
+	}
+	inspected, err := target.Client.ContainerInspect(ctx, containers[0].ID, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := inspected.Container.HostConfig
+	if host == nil {
+		t.Fatal("container has no host config")
+	}
+	if host.PidMode != "host" || host.IpcMode != "host" {
+		t.Fatalf("host namespaces = %q, %q, want host, host", host.PidMode, host.IpcMode)
+	}
+	found := false
+	for _, capability := range host.CapAdd {
+		if config.NormalizeCapability(capability) == "SYS_PTRACE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("capabilities = %#v, want SYS_PTRACE", host.CapAdd)
+	}
+	found = false
+	for _, device := range host.Devices {
+		if device.PathOnHost == "/dev/null" && device.CgroupPermissions == "rw" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("devices = %#v, want /dev/null with rw", host.Devices)
+	}
+}
+
+func TestUpRejectsForeignRetainedResources(t *testing.T) {
+	for _, kind := range []string{"network", "volume"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			main, store, registration, target := upWorkspace(t, ctx)
+			labels := map[string]string{"io.trocker.fixture-id": registration.ID}
+			name := registration.ProjectName() + "_data"
+			if kind == "network" {
+				name = registration.ProjectName() + "_default"
+				created, err := target.Client.NetworkCreate(ctx, name, client.NetworkCreateOptions{Labels: labels})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+					defer cancel()
+					found, err := target.Client.NetworkInspect(cleanup, created.ID, client.NetworkInspectOptions{})
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					if found.Network.Labels["io.trocker.fixture-id"] != registration.ID || found.Network.Labels[compose.WorkspaceLabel] != "" {
+						t.Error("foreign network was adopted or changed")
+						return
+					}
+					if _, err := target.Client.NetworkRemove(cleanup, created.ID, client.NetworkRemoveOptions{}); err != nil {
+						t.Error(err)
+					}
+				})
+			} else {
+				if _, err := target.Client.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: labels}); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+					defer cancel()
+					found, err := target.Client.VolumeInspect(cleanup, name, client.VolumeInspectOptions{})
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					if found.Volume.Labels["io.trocker.fixture-id"] != registration.ID || found.Volume.Labels[compose.WorkspaceLabel] != "" {
+						t.Error("foreign volume was adopted or changed")
+						return
+					}
+					if _, err := target.Client.VolumeRemove(cleanup, name, client.VolumeRemoveOptions{}); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			if _, err := lifecycle.Plan(ctx, main, store); err == nil || !strings.Contains(err.Error(), "ownership") {
+				t.Fatalf("plan accepted foreign %s: %v", kind, err)
+			}
+			if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard); err == nil || !strings.Contains(err.Error(), "ownership") {
+				t.Fatalf("up accepted foreign %s: %v", kind, err)
+			}
+			containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
+			if err != nil || len(containers) != 0 {
+				t.Fatalf("failed preflight created containers: %v", err)
+			}
+		})
+	}
+}
+
+func TestCanceledUpPreservesResourcesAndCanRecover(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	main, store, registration, target := upWorkspace(t, ctx)
+	writeSelfBinding(t, main)
+	unhealthy := strings.Replace(upCompose, "[CMD, test, -f, /data/token]", "[CMD, 'false']", 1)
+	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte(unhealthy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startup, stop := context.WithCancel(ctx)
+	defer stop()
+	done := make(chan error, 1)
+	go func() {
+		_, err := lifecycle.Up(startup, main, store, compose.UpOptions{Detach: true}, io.Discard)
+		done <- err
+	}()
+	for {
+		containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(containers) > 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("startup ended before cancellation: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
+	if err != nil || len(containers) == 0 {
+		t.Fatal("cancellation deleted partial resources")
+	}
+	if _, err := target.Client.VolumeInspect(ctx, registration.ProjectName()+"_data", client.VolumeInspectOptions{}); err != nil {
+		t.Fatal("cancellation lost volume", err)
+	}
+	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte(upCompose), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorkspaceID != registration.ID {
+		t.Fatal("recovery changed workspace identity")
+	}
+	readEndpointToken(t, ctx, result)
 }

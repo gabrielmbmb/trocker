@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"sort"
-	"strings"
 
 	"github.com/docker/compose/v5/pkg/api"
 
@@ -26,10 +24,10 @@ type Observation struct {
 }
 
 type ServiceStatus struct {
-	Service   string
-	Container string
-	State     string
-	Health    string
+	Service   string `json:"service"`
+	Container string `json:"name"`
+	State     string `json:"state"`
+	Health    string `json:"health"`
 }
 
 // Observe only reads registration, configuration, and Docker state. It does not
@@ -43,15 +41,12 @@ func Observe(ctx context.Context, directory string, store state.Store) (observat
 	if err != nil {
 		return observation, err
 	}
-	target, err := compose.ResolveTarget(ctx)
+	target, err := registeredTarget(ctx, registration)
 	if err != nil {
 		return observation, err
 	}
 	defer func() { err = errors.Join(err, target.Close()) }()
-	if !slices.Contains(registration.Targets, target.ID) {
-		return observation, &registrationError{problem: "workspace is not registered with the selected Docker target"}
-	}
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		return observation, err
 	}
@@ -67,7 +62,7 @@ func summarizeServices(names []string, containers []api.ContainerSummary) []Serv
 	seen := make(map[string]bool)
 	for _, ctr := range containers {
 		services = append(services, ServiceStatus{Service: ctr.Service, Container: ctr.Name, State: string(ctr.State), Health: string(ctr.Health)})
-		if !strings.EqualFold(ctr.Labels[api.OneoffLabel], "true") {
+		if !compose.IsOneOff(ctr) {
 			seen[ctr.Service] = true
 		}
 	}

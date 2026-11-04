@@ -53,7 +53,7 @@ func ListStacks(ctx context.Context, store state.Store, all bool) (stacks []Stac
 		if err != nil {
 			return nil, err
 		}
-		containers, err := target.Containers(ctx, registration)
+		containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 		if err != nil {
 			return nil, err
 		}

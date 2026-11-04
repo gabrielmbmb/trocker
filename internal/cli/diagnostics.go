@@ -6,14 +6,12 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/moby/term"
 )
 
 // WriteError renders a safe error summary and any optional recovery guidance.
 // Callers provide the diagnostic stream, not the command's result stream.
 func WriteError(out io.Writer, err error) error {
-	_, terminal := term.GetFdInfo(out)
+	terminal := isTerminal(out)
 	color := terminal && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 	label := func(name, code string) string {
 		if color {

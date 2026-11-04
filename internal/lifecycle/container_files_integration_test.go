@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
@@ -88,7 +89,7 @@ func TestContainerGeneratedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifyContainerFile(t, ctx, result, "one")
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || len(containers) != 1 {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestContainerGeneratedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	containers, err = target.Containers(ctx, registration)
+	containers, err = target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || containers[0].ID != originalID {
 		t.Fatal("unchanged files recreated service", err)
 	}
@@ -142,7 +143,7 @@ func TestContainerGeneratedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifyContainerFile(t, ctx, result, "two")
-	containers, err = target.Containers(ctx, registration)
+	containers, err = target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil || containers[0].ID == originalID {
 		t.Fatal("changed content did not recreate service", err)
 	}
@@ -182,5 +183,30 @@ func verifyContainerFile(t *testing.T, ctx context.Context, result lifecycle.End
 	}
 	if document["url"] != result.Endpoints[0].Addresses.Host.URL || document["id"] != result.WorkspaceID || document["generation"] != generation {
 		t.Fatal("incorrect generated configuration", document)
+	}
+}
+
+func TestContainerFilesRerenderAfterBindConflict(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	main, store, registration, target := upWorkspace(t, ctx)
+	_, _, contender, _ := upWorkspace(t, ctx)
+	for name, data := range map[string]string{"empty.tmpl": "", "compose.yaml": containerFilesCompose, "trocker.yaml": containerFilesManifest, "app.json.tmpl": `{"url":{{json .url}},"id":{{json .id}},"generation":"retry"}`} {
+		if err := os.WriteFile(filepath.Join(main, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := &stealAllocatedPort{ctx: ctx, target: target, registration: registration, contender: contender, limit: 1}
+	result, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output.occupied) != 1 || !strings.Contains(output.output.String(), "retrying") || result.Endpoints[0].Addresses.Host.Port == output.occupied[0] {
+		t.Fatal("bind race was not retried")
+	}
+	verifyContainerFile(t, ctx, result, "retry")
+	containers, err := target.Containers(ctx, contender, api.PsOptions{All: true})
+	if err != nil || len(containers) != 1 {
+		t.Fatal("unrelated contender was changed", err)
 	}
 }

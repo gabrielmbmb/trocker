@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/compose/v5/pkg/api"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/config"
@@ -113,7 +114,7 @@ func Up(ctx context.Context, directory string, store state.Store, options compos
 	if err := target.CheckOwnership(ctx, prepared.Project, prepared.Registration); err != nil {
 		return result, err
 	}
-	containers, err := target.Containers(ctx, prepared.Registration)
+	containers, err := target.Containers(ctx, prepared.Registration, api.PsOptions{All: true})
 	if err != nil {
 		return result, err
 	}

@@ -89,11 +89,19 @@ func queryStore() (state.Store, error) {
 func writeStatus(out io.Writer, observation lifecycle.Observation) error {
 	var message strings.Builder
 	fmt.Fprintf(&message, "Workspace %s\n\n", observation.WorkspaceID)
-	table := tabwriter.NewWriter(&message, 0, 4, 2, ' ', 0)
+	if err := writeServiceStatuses(&message, observation.Services); err != nil {
+		return err
+	}
+	_, err := io.WriteString(out, message.String())
+	return err
+}
+
+func writeServiceStatuses(out io.Writer, services []lifecycle.ServiceStatus) error {
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(table, "SERVICE\tCONTAINER\tSTATE\tHEALTH"); err != nil {
 		return err
 	}
-	for _, service := range observation.Services {
+	for _, service := range services {
 		name, health := service.Container, service.Health
 		if name == "" {
 			name = "-"
@@ -105,11 +113,7 @@ func writeStatus(out io.Writer, observation lifecycle.Observation) error {
 			return err
 		}
 	}
-	if err := table.Flush(); err != nil {
-		return err
-	}
-	_, err := io.WriteString(out, message.String())
-	return err
+	return table.Flush()
 }
 
 func writeEndpoints(out io.Writer, result lifecycle.EndpointResult) error {

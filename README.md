@@ -78,7 +78,10 @@ You can manage the stack directly at any time:
 | `trocker up --detach` | Create or update the stack and wait for running/healthy services |
 | `trocker up --detach --build` | Rebuild images and start the stack |
 | `trocker ls` | List running stacks and their worktrees; `--all` includes stopped stacks and worktrees without containers |
-| `trocker status` | Show workspace containers and their state/health |
+| `trocker status` | Show workspace services and their container state/health |
+| `trocker ps [SERVICE...]` | List running containers; add `--all` for stopped/one-off containers and `--json` for machine-readable output |
+| `trocker logs [SERVICE...]` | View container logs; supports `--follow`, `--tail`, `--since`, `--until`, and `--timestamps` |
+| `trocker exec SERVICE COMMAND [ARGS...]` | Run a command in a running service container and propagate its exit status |
 | `trocker endpoints` | Show current addresses; add `--json` for machine-readable output |
 | `trocker plan` / `trocker doctor` | Preview changes or check configuration without writes |
 | `trocker stop [SERVICE...]` | Stop containers without deleting resources |
@@ -89,6 +92,8 @@ You can manage the stack directly at any time:
 | `trocker help COMMAND` | Show command options |
 
 `trocker ls` works from any directory and reports stacks for the selected Docker target. Add `--all` to include stopped stacks and registered worktrees without containers. Registrations whose worktree is gone are listed as `missing`; `trocker release` stops whatever they still own and forgets them.
+
+Address containers by Compose service name, not the generated container name: `trocker exec kennedy-api bash`, `trocker logs kennedy-api`, `trocker ps`. `trocker ps --json` reports `workspace_id`, the Compose `project`, and each container's `name`, `service`, `state`, and `health`; it is the documented way to obtain those values for scripts.
 
 Use `up`, not `start`, to apply configuration changes. Service arguments to `up` select services and their Compose dependencies. Run `trocker up` without `--detach` to follow logs; end that foreground session before another mutating command for the same workspace.
 

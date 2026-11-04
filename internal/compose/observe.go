@@ -19,7 +19,11 @@ const WorkspaceLabel = "io.trocker.workspace-id"
 // service keeps SDK operations on the already resolved daemon. Callers opt in
 // to progress rendering; read-only queries remain silent.
 func (t *Target) service(options ...sdk.Option) (api.Compose, error) {
-	cli, err := command.NewDockerCli(command.WithAPIClient(t.Client), command.WithOutputStream(io.Discard), command.WithErrorStream(io.Discard), command.WithInputStream(io.NopCloser(strings.NewReader(""))))
+	return t.serviceWithStreams(strings.NewReader(""), io.Discard, io.Discard, options...)
+}
+
+func (t *Target) serviceWithStreams(input io.Reader, output, diagnostics io.Writer, options ...sdk.Option) (api.Compose, error) {
+	cli, err := command.NewDockerCli(command.WithAPIClient(t.Client), command.WithInputStream(readCloser(input)), command.WithOutputStream(output), command.WithErrorStream(diagnostics))
 	if err != nil {
 		return nil, &observationError{err}
 	}
@@ -34,12 +38,26 @@ func (t *Target) service(options ...sdk.Option) (api.Compose, error) {
 	return sdk.NewComposeService(cli, options...)
 }
 
-func (t *Target) Containers(ctx context.Context, registration workspace.Registration) ([]api.ContainerSummary, error) {
+// readCloser preserves an existing file descriptor so the Docker CLI can detect
+// a terminal and set raw mode for interactive exec.
+func readCloser(input io.Reader) io.ReadCloser {
+	if input == nil {
+		return io.NopCloser(strings.NewReader(""))
+	}
+	if closer, ok := input.(io.ReadCloser); ok {
+		return closer
+	}
+	return io.NopCloser(input)
+}
+
+// Containers lists the workspace's containers with the SDK's Ps filters and
+// verifies that every returned container is owned by the registration.
+func (t *Target) Containers(ctx context.Context, registration workspace.Registration, options api.PsOptions) ([]api.ContainerSummary, error) {
 	service, err := t.service()
 	if err != nil {
 		return nil, &observationError{err}
 	}
-	containers, err := service.Ps(ctx, registration.ProjectName(), api.PsOptions{All: true})
+	containers, err := service.Ps(ctx, registration.ProjectName(), options)
 	if err != nil {
 		return nil, &observationError{err}
 	}

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/compose/v5/pkg/api"
+
 	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
 	"github.com/gabrielmbmb/trocker/internal/state"
@@ -181,7 +183,7 @@ func TestInitReleasesOnlyInertDeadWorkspaces(t *testing.T) {
 func linkedWorkspace(t *testing.T, ctx context.Context, main string, store state.Store, target *compose.Target) (string, workspace.Registration) {
 	t.Helper()
 	linked := filepath.Join(filepath.Dir(main), "linked")
-	git(t, main, "worktree", "add", "--detach", linked)
+	git(t, main, "worktree", "add", "--detach", linked) //nolint:contextcheck // Git fixtures use the test context; daemon operations use the shorter timeout.
 	for name, content := range map[string]string{
 		"compose.yaml": upCompose,
 		"trocker.yaml": "version: 1\ncompose: [compose.yaml]\n",
@@ -208,7 +210,7 @@ func linkedWorkspace(t *testing.T, ctx context.Context, main string, store state
 
 func heldResources(t *testing.T, ctx context.Context, target *compose.Target, registration workspace.Registration) compose.Held {
 	t.Helper()
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}

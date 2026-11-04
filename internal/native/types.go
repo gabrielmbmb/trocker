@@ -21,11 +21,12 @@ type (
 	}
 )
 
-// ExitError is a child's exit status, never a CLI validation or launch error.
+// ExitError is a child command's exit status, native or containerized, never a
+// CLI validation or launch error.
 type ExitError struct{ Code int }
 
 func (e *ExitError) Error() string {
-	return fmt.Sprintf("native command exited with status %d", e.Code)
+	return fmt.Sprintf("command exited with status %d", e.Code)
 }
 
 type launchError struct{ cause error }

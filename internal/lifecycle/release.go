@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/docker/compose/v5/pkg/api"
+
 	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/state"
 	"github.com/gabrielmbmb/trocker/internal/workspace"
@@ -47,14 +49,11 @@ func Release(ctx context.Context, directory string, store state.Store, reference
 	if err != nil || !found {
 		return result, err
 	}
-	target, err := compose.ResolveTarget(ctx)
+	target, err := registeredTarget(ctx, registration)
 	if err != nil {
 		return result, err
 	}
 	defer func() { err = errors.Join(err, target.Close()) }()
-	if !slices.Contains(registration.Targets, target.ID) {
-		return result, &registrationError{problem: "workspace is not registered with the selected Docker target"}
-	}
 	held, err := heldResources(ctx, target, registration)
 	if err != nil {
 		return result, err
@@ -90,7 +89,7 @@ func Release(ctx context.Context, directory string, store state.Store, reference
 // heldResources observes what a workspace still owns on one target, using the
 // same ownership-checked container view as the lifecycle commands.
 func heldResources(ctx context.Context, target *compose.Target, registration workspace.Registration) (compose.Held, error) {
-	containers, err := target.Containers(ctx, registration)
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
 	if err != nil {
 		return compose.Held{}, err
 	}

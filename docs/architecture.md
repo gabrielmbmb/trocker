@@ -117,6 +117,8 @@ Existing resources must match both Compose and workspace ownership. Familiar nam
 | `start`, `stop`, `down` | Reconstruct existing resources through the SDK, verify ownership, and perform the lifecycle operation without reloading current Compose/manifest files. Registration is preserved. |
 | `release [WORKSPACE]` | Resolve the workspace by directory or id prefix, verify the target association, stop owned resources through the `down` path, then delete the worktree marker and registry entry. Retained volumes keep the registration unless `--volumes` is set. Releasing an already-released workspace is a successful no-op. |
 | `status`, `endpoints` | Query owned resources without changing files or Docker state. Unregistered workspaces fail rather than registering implicitly. |
+| `ps` | Read registration and owned containers, then list or encode them as JSON without loading current Compose/manifest files, changing Docker state, or acquiring locks. Default output includes running non-one-off containers; `--all` adds stopped and one-off containers. |
+| `logs`, `exec` | Read owned containers, resolve requested Compose service names against that snapshot, and stream logs or run a command in the selected container without acquiring workspace locks. `exec` requires a running container and propagates its exit status. |
 | `ls` | Read the registry, checkout liveness, and live containers for the selected Docker target; list stacks with their worktree paths and mark registrations whose worktree is gone, including whether Git metadata still records it. Does not load manifests, run Git commands, or acquire locks. |
 | `run` | Validate the selected service, observe referenced host endpoints, prepare native bindings/files, then launch the foreground child without holding workspace/registry locks. |
 
@@ -196,11 +198,13 @@ Native execution is not a sandbox, detached supervisor, or allocator for the app
 
 ## Output and failure contracts
 
-Diagnostics, prompts, progress, and foreground container logs go to stderr; results go to stdout. Compose's SDK renderer owns resource progress: terminal rendering interactively and plain rendering for pipes/CI, `NO_COLOR`, and `TERM=dumb`. Trocker context is placed before or after live progress, not interleaved. Build-step logs remain suppressed and known SDK failures are classified into safe diagnostics.
+Diagnostics, prompts, progress, and `up` foreground container logs go to stderr; results, including `logs` output, go to stdout. Compose's SDK renderer owns resource progress: terminal rendering interactively and plain rendering for pipes/CI, `NO_COLOR`, and `TERM=dumb`. Trocker context is placed before or after live progress, not interleaved. Build-step logs remain suppressed and known SDK failures are classified into safe diagnostics.
 
 Errors have a concise summary and optional action/context. Plans and diagnostics can show binding names and references, never resolved environment values, rendered content, raw secret-bearing configuration, or authentication data. Preserve internal causes without exposing them indiscriminately.
 
-Exit status is 0 for success, 1 for configuration/runtime failures, and 2 for CLI usage errors. Native child exit codes, including 2, propagate without an extra Trocker diagnostic. Signal exits use 128 plus the signal number; explicit child exit codes take precedence, while signal-canceled execution does not become successful merely because the child returned zero.
+Exit status is 0 for success, 1 for configuration/runtime failures, and 2 for CLI usage errors. Native and container `exec` child exit codes, including 2, propagate without an extra Trocker diagnostic. Signal exits use 128 plus the signal number; explicit child exit codes take precedence, while signal-canceled execution does not become successful merely because the child returned zero.
+
+`ps --json` emits schema version 1 with `workspace_id`, the Compose `project`, and a `containers` array of `name`, `service`, `state`, and `health`. The array is `[]` when nothing matches. It reads only registration and owned live containers, so it does not require current Compose or manifest files.
 
 `endpoints --json` emits schema version 1 with `workspace_id`, `target_id`, and alias-sorted `endpoints`. Each endpoint contains `name`, `service`, `container_port`, `scheme`, `state`, and `addresses` with container/host address objects (`host`, `port`, and `url` except for TCP). States are `published`, `stopped`, or `missing`; stopped/missing publications have null host addresses. Published means an observed running mapping, not application readiness. Ambiguous or replicated mappings and ownership conflicts fail rather than selecting arbitrarily. An unreachable daemon is an error, not a fabricated missing result. JSON failures leave stdout empty.
 
