@@ -58,6 +58,8 @@ The workspace-root `trocker.yaml` is a single, strictly validated YAML document.
 version: 1
 compose:
   - compose.yaml
+profiles:
+  - workos-local
 endpoints:
   api:
     service: backend
@@ -74,6 +76,8 @@ bindings:
 ```
 
 `compose` is a nonempty ordered path list; relative paths resolve from the manifest directory. Compose contents and merging are SDK concerns. `endpoints` and `bindings` are optional. Binding service names must exist in the active Compose project.
+
+`profiles` is an optional ordered list of Compose profile names. A nonempty list replaces `COMPOSE_PROFILES` from the environment or project `.env`; `*` activates every profile. An empty or omitted list preserves the environment fallback, and `profiles: []` is therefore the same as omitting the field. Profile names use Compose's `[A-Za-z0-9][A-Za-z0-9_.-]*` shape, duplicates are rejected, and an explicit name that no Compose service declares fails with the available profiles. The `--profile` flag on `plan`, `doctor`, `up`, `run`, `status`, and `endpoints` is a one-command override that replaces the manifest selection. Commands that operate on existing resources (`start`, `stop`, `down`, `release`, `ls`, `ps`, `logs`, `exec`) do not load Compose and remain profile-agnostic. `plan` and `doctor` report the active profiles and resulting service count.
 
 Endpoint aliases match `[a-z][a-z0-9_]*`. Every endpoint declares a service, a container port from 1–65535, and a scheme (`http`, `https`, `ws`, `wss`, or `tcp`). Its port must match a TCP `ports` target or `expose` declaration. Schemes describe existing listeners; they do not configure TLS or prove readiness.
 

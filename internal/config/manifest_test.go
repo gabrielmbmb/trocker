@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,6 +75,61 @@ func TestManifestValidation(t *testing.T) {
 				t.Fatal("error exposed a value")
 			}
 		})
+	}
+}
+
+func TestManifestProfiles(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		profiles string
+		want     []string
+		field    string
+	}{
+		{name: "valid names", profiles: "[workos-local, n8n, debug_2]", want: []string{"workos-local", "n8n", "debug_2"}},
+		{name: "all profiles", profiles: "['*']", want: []string{"*"}},
+		{name: "empty list"},
+		{name: "duplicate", profiles: "[debug, debug]", field: "profiles"},
+		{name: "empty name", profiles: "['']", field: "profiles[0]"},
+		{name: "space", profiles: "['bad profile']", field: "profiles[0]"},
+		{name: "leading punctuation", profiles: "['-debug']", field: "profiles[0]"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := base
+			if test.profiles != "" {
+				input += "profiles: " + test.profiles + "\n"
+			}
+			manifest, err := config.Parse([]byte(input))
+			if test.field != "" {
+				var validation *config.Error
+				if !errors.As(err, &validation) || !strings.HasPrefix(validation.Field, test.field) {
+					t.Fatalf("error = %v, want config error at %s", err, test.field)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(manifest.Profiles, test.want) {
+				t.Fatalf("profiles = %v, want %v", manifest.Profiles, test.want)
+			}
+		})
+	}
+}
+
+func TestProfileSummary(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		profiles []string
+		want     string
+	}{
+		{profiles: []string{""}, want: "none"},
+		{profiles: []string{"workos-local", "", "debug", "debug"}, want: "debug, workos-local"},
+	} {
+		if got := config.ProfileSummary(test.profiles); got != test.want {
+			t.Errorf("ProfileSummary(%v) = %q, want %q", test.profiles, got, test.want)
+		}
 	}
 }
 

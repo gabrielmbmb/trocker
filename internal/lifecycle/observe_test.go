@@ -15,10 +15,10 @@ import (
 func TestUnregisteredObservationsWriteNothing(t *testing.T) {
 	directory, main := repository(t)
 	store := state.Store{Directory: filepath.Join(directory, "state")}
-	if _, err := lifecycle.Observe(t.Context(), main, store); err == nil || !strings.Contains(err.Error(), "not registered") {
+	if _, err := lifecycle.Observe(t.Context(), main, store, nil); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("status: %v", err)
 	}
-	if _, err := lifecycle.Endpoints(t.Context(), main, store); err == nil || !strings.Contains(err.Error(), "not registered") {
+	if _, err := lifecycle.Endpoints(t.Context(), main, store, nil); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("endpoints: %v", err)
 	}
 	if _, err := os.Stat(store.Directory); !os.IsNotExist(err) {

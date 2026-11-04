@@ -32,7 +32,7 @@ func Build(manifest *config.Manifest, source *types.Project, registration worksp
 	}
 	selected, err := source.WithSelectedServices(options.Services)
 	if err != nil {
-		return nil, fmt.Errorf("selected service is not active in the Compose project")
+		return nil, selectionFailure(source, options.Services)
 	}
 	project, err := selected.WithServicesTransform(func(name string, service types.ServiceConfig) (types.ServiceConfig, error) {
 		if err := isolateService(&service, registration, manifest); err != nil {
@@ -254,6 +254,54 @@ func ExposesDockerSocket(source string) bool {
 		}
 	}
 	return false
+}
+
+// selectionError explains a service that the active profile selection hid, or
+// a name that no Compose file declares.
+type selectionError struct {
+	service  string
+	required []string
+	active   []string
+}
+
+func selectionFailure(project *types.Project, names []string) error {
+	for _, name := range names {
+		if service, disabled := project.DisabledServices[name]; disabled {
+			return &selectionError{service: name, required: service.Profiles, active: project.Profiles}
+		}
+		if _, active := project.Services[name]; !active {
+			return &selectionError{service: name, active: project.Profiles}
+		}
+	}
+	return &selectionError{active: project.Profiles}
+}
+
+func (e *selectionError) Error() string {
+	if e.service == "" {
+		return "selected service is not active in the Compose project"
+	}
+	if len(e.required) == 0 {
+		return "service " + e.service + " is not declared in the Compose project"
+	}
+	return "service " + e.service + " is inactive; activate profile " + config.ProfileSummary(e.required)
+}
+
+func (e *selectionError) Help() string {
+	if e.service == "" {
+		return "select an active service or include its dependency"
+	}
+	if len(e.required) == 0 {
+		return "check the service name in the selected Compose files"
+	}
+	flags := make([]string, len(e.required))
+	for i, profile := range e.required {
+		flags[i] = "--profile " + profile
+	}
+	return "add " + config.ProfileSummary(e.required) + " to profiles in trocker.yaml, or pass " + strings.Join(flags, " ")
+}
+
+func (e *selectionError) Note() string {
+	return "active profiles: " + config.ProfileSummary(e.active)
 }
 
 // policyError is a safe, actionable isolation-policy diagnostic.

@@ -76,7 +76,7 @@ func TestContainerGeneratedFiles(t *testing.T) {
 	template := `{"url":{{json .url}},"id":{{json .id}},"generation":"one"}`
 	write("app.json.tmpl", template)
 	before := snapshotObservationFiles(t, main, store.Directory)
-	preview, err := lifecycle.Plan(ctx, main, store)
+	preview, err := lifecycle.Plan(ctx, main, store, nil)
 	if err != nil || preview.PlannedPorts != 1 || preview.ContainerFiles != 2 {
 		t.Fatal("file-only port requirement or preview missing", err)
 	}
@@ -133,7 +133,7 @@ func TestContainerGeneratedFiles(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Start}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	observed, err := lifecycle.Endpoints(ctx, main, store)
+	observed, err := lifecycle.Endpoints(ctx, main, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

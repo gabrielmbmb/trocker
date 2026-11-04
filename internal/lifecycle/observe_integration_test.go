@@ -98,14 +98,14 @@ func TestReadOnlyObservations(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	observation, err := lifecycle.Observe(ctx, main, store)
+	observation, err := lifecycle.Observe(ctx, main, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(observation.Services) != 2 || observation.Services[0].Health != "unhealthy" || observation.Services[1].State != "missing" {
 		t.Fatalf("unexpected services: %+v", observation.Services)
 	}
-	endpoints, err := lifecycle.Endpoints(ctx, main, store)
+	endpoints, err := lifecycle.Endpoints(ctx, main, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +133,9 @@ func TestReadOnlyObservations(t *testing.T) {
 			if !strings.Contains(output.String(), "No resources were changed") || strings.Contains(output.String(), "do-not-print") {
 				t.Fatalf("unsafe plan output: %s", &output)
 			}
+			if !strings.Contains(output.String(), "  Profiles   ") || !strings.Contains(output.String(), "  Services   2 active") {
+				t.Fatalf("plan output hides profile selection: %s", &output)
+			}
 		}
 		output.Reset()
 		if err := cli.RunContext(ctx, []string{"status"}, "test", strings.NewReader(""), &output, &diagnostics); err != nil {
@@ -146,7 +149,7 @@ func TestReadOnlyObservations(t *testing.T) {
 	if _, err := target.Client.ContainerStop(ctx, owned, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatal(err)
 	}
-	endpoints, err = lifecycle.Endpoints(ctx, main, store)
+	endpoints, err = lifecycle.Endpoints(ctx, main, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,10 +169,10 @@ func TestReadOnlyObservations(t *testing.T) {
 	conflicting := registration
 	conflicting.ID = uuid.NewString()
 	createObservationContainer(t, ctx, target, registration.ProjectName(), conflicting.ID, false)
-	if _, err := lifecycle.Observe(ctx, main, store); err == nil || !strings.Contains(err.Error(), "ownership") {
+	if _, err := lifecycle.Observe(ctx, main, store, nil); err == nil || !strings.Contains(err.Error(), "ownership") {
 		t.Fatalf("foreign resource accepted: %v", err)
 	}
-	if _, err := lifecycle.Endpoints(ctx, main, store); err == nil {
+	if _, err := lifecycle.Endpoints(ctx, main, store, nil); err == nil {
 		t.Fatal("foreign endpoint accepted")
 	}
 }

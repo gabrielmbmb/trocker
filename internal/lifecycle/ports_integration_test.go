@@ -75,7 +75,7 @@ func TestHostBindingsReuseAndPreferenceConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshotObservationFiles(t, main, store.Directory)
-	preview, err := lifecycle.Plan(ctx, main, store)
+	preview, err := lifecycle.Plan(ctx, main, store, nil)
 	if err != nil || preview.PlannedPorts != 1 {
 		t.Fatal("preview", err)
 	}
@@ -406,7 +406,7 @@ func TestAllocatedStartupProcessHelper(t *testing.T) {
 	store := state.Store{Directory: os.Getenv("TROCKER_TEST_ALLOCATION_STATE")}
 	output := io.Discard
 	if os.Getenv("TROCKER_TEST_ALLOCATION_HOLD") == "true" {
-		preview, err := lifecycle.Plan(ctx, main, store)
+		preview, err := lifecycle.Plan(ctx, main, store, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

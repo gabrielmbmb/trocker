@@ -32,12 +32,12 @@ type ServiceStatus struct {
 
 // Observe only reads registration, configuration, and Docker state. It does not
 // acquire write locks or repair incomplete/moved registrations.
-func Observe(ctx context.Context, directory string, store state.Store) (observation Observation, err error) {
+func Observe(ctx context.Context, directory string, store state.Store, profiles []string) (observation Observation, err error) {
 	registration, err := registeredWorkspace(ctx, directory, store)
 	if err != nil {
 		return observation, err
 	}
-	manifest, project, err := compose.Load(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"))
+	manifest, project, err := compose.Load(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"), profiles)
 	if err != nil {
 		return observation, err
 	}
@@ -120,8 +120,8 @@ func (e *registrationError) Help() string {
 
 // Endpoints loads configuration once and resolves addresses solely from current
 // owned container observations, never registry port preferences.
-func Endpoints(ctx context.Context, directory string, store state.Store) (result EndpointResult, err error) {
-	observation, err := Observe(ctx, directory, store)
+func Endpoints(ctx context.Context, directory string, store state.Store, profiles []string) (result EndpointResult, err error) {
+	observation, err := Observe(ctx, directory, store, profiles)
 	if err != nil {
 		return result, err
 	}

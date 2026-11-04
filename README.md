@@ -97,6 +97,8 @@ Address containers by Compose service name, not the generated container name: `t
 
 Use `up`, not `start`, to apply configuration changes. Service arguments to `up` select services and their Compose dependencies. Run `trocker up` without `--detach` to follow logs; end that foreground session before another mutating command for the same workspace.
 
+Compose profiles are part of the manifest rather than the invoking shell. Declare `profiles:` in `trocker.yaml` to make profile-gated services and their endpoints deterministic; `*` activates every profile. A nonempty `--profile` on `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` overrides the manifest for that command. When neither selects profiles, `COMPOSE_PROFILES` from the environment or project `.env` remains the fallback. `plan` and `doctor` report the active profiles and service count.
+
 **Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Registration tracks the worktree rather than the stack, so `down` never deletes it: `init` releases registrations whose worktree Git no longer records and which own nothing, and `trocker release` removes the rest. Retained volumes keep a registration until they are released with `--volumes`, because the registration is what makes them removable. Images and bind-mounted files are retained. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
 
 ## Supported scope
@@ -177,6 +179,8 @@ Keep service definitions in Compose:
 version: 1
 compose:
   - compose.yaml
+profiles:
+  - workos-local
 endpoints:
   api:
     service: backend

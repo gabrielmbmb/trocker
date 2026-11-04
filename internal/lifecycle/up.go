@@ -28,12 +28,12 @@ type PlanResult struct {
 	ContainerFiles int
 }
 
-func preparePlan(ctx context.Context, directory string, store state.Store, services []string) (PlanResult, error) {
+func preparePlan(ctx context.Context, directory string, store state.Store, services, profiles []string) (PlanResult, error) {
 	registration, err := registeredWorkspace(ctx, directory, store)
 	if err != nil {
 		return PlanResult{}, err
 	}
-	manifest, source, err := compose.LoadForPlan(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"))
+	manifest, source, err := compose.LoadForPlan(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"), profiles)
 	if err != nil {
 		return PlanResult{}, err
 	}
@@ -61,8 +61,8 @@ func registeredTarget(ctx context.Context, registration workspace.Registration) 
 
 // Plan checks the same isolation and ownership rules as Up without acquiring
 // write locks, claiming ports, rewriting metadata, or creating resources.
-func Plan(ctx context.Context, directory string, store state.Store) (result PlanResult, err error) {
-	result, err = preparePlan(ctx, directory, store, nil)
+func Plan(ctx context.Context, directory string, store state.Store, profiles []string) (result PlanResult, err error) {
+	result, err = preparePlan(ctx, directory, store, nil, profiles)
 	if err != nil {
 		return result, err
 	}
@@ -94,7 +94,7 @@ func Up(ctx context.Context, directory string, store state.Store, options compos
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
 	// Reload under the workspace lock: a concurrent init/up may have completed.
-	prepared, err := preparePlan(ctx, directory, store, options.Services)
+	prepared, err := preparePlan(ctx, directory, store, options.Services, options.Profiles)
 	if err != nil {
 		return result, err
 	}

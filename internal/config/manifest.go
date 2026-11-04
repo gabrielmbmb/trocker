@@ -16,6 +16,7 @@ import (
 type Manifest struct {
 	Version              int                        `yaml:"version"`
 	Compose              []string                   `yaml:"compose"`
+	Profiles             []string                   `yaml:"profiles"`
 	ReadWritePaths       []string                   `yaml:"read_write_paths"`
 	SharedWritePaths     []string                   `yaml:"shared_write_paths"`
 	BuildContexts        []string                   `yaml:"build_contexts"`
@@ -67,6 +68,7 @@ func invalid(field, problem string) error { return &Error{Field: field, Problem:
 var (
 	aliasPattern       = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	environmentPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	profilePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 )
 
 // Load reads exactly the supplied manifest and resolves its Compose paths.
@@ -229,6 +231,9 @@ func (m *Manifest) Validate() error {
 			return invalid(fmt.Sprintf("compose[%d]", i), "expected a nonempty file path")
 		}
 	}
+	if err := m.validateProfiles(); err != nil {
+		return err
+	}
 	for i, path := range m.ReadWritePaths {
 		if strings.TrimSpace(path) == "" {
 			return invalid(fmt.Sprintf("read_write_paths[%d]", i), "expected a nonempty host path")
@@ -275,4 +280,36 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	return m.validateBindings()
+}
+
+// validateProfiles checks names and duplicates. A nonempty selection replaces
+// the SDK's COMPOSE_PROFILES fallback.
+func (m *Manifest) validateProfiles() error {
+	seen := make(map[string]bool, len(m.Profiles))
+	for i, profile := range m.Profiles {
+		if profile != "*" && !profilePattern.MatchString(profile) {
+			return invalid(fmt.Sprintf("profiles[%d]", i), "expected a Compose profile name or *")
+		}
+		if seen[profile] {
+			return invalid("profiles", "duplicate profile "+profile)
+		}
+		seen[profile] = true
+	}
+	return nil
+}
+
+// ProfileSummary formats profile names for diagnostics. Empty values are
+// ignored, duplicates are removed, and names are sorted.
+func ProfileSummary(profiles []string) string {
+	named := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		if profile != "" {
+			named = append(named, profile)
+		}
+	}
+	if len(named) == 0 {
+		return "none"
+	}
+	slices.Sort(named)
+	return strings.Join(slices.Compact(named), ", ")
 }

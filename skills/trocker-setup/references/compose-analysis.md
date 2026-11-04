@@ -105,13 +105,13 @@ Multiple top-level files are merged in the order listed. A Compose override may 
 
 ## 3. Determine active services and profiles
 
-A service with a `profiles` key is inactive unless one of its profiles is enabled. Trocker has no profile flag in `trocker.yaml`; profiles come from the environment, including Compose `.env` values such as `COMPOSE_PROFILES`.
+A service with a `profiles` key is inactive unless one of its profiles is enabled. Prefer an explicit `profiles:` list in `trocker.yaml` so the selection does not depend on the invoking shell. A nonempty list replaces `COMPOSE_PROFILES` from the environment or `.env`; `*` activates every profile. If the manifest omits profiles or declares an empty list, the environment fallback remains in effect. `--profile` on `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` overrides the manifest for that command.
 
 Consequences:
 
-- An endpoint must refer to an active service. If the service is profile-gated, confirm that the environment used to run Trocker enables it.
-- Do not add a binding for a service that is inactive by default unless the user confirms the profile setup.
-- `trocker plan` and `trocker doctor` validate against the active project, so they will expose an endpoint/service mismatch.
+- An endpoint must refer to an active service. For a profile-gated service, add the profile to the manifest before declaring the endpoint or binding.
+- Do not add a binding for a service that is inactive under the selected profiles unless the user confirms the profile setup.
+- `trocker plan` and `trocker doctor` validate against the active project and report the active profiles and service count, so they expose an endpoint/service mismatch.
 
 Do not print `.env` values. If needed, list only variable names, or ask the user which profiles are intended.
 

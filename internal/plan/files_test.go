@@ -13,7 +13,7 @@ import (
 
 func TestContainerFileSelectionAndMountSafety(t *testing.T) {
 	_, path := fixture(t, "services:\n  api: {image: busybox, expose: [8000]}\n  web: {image: busybox}\n")
-	manifest, source, err := compose.LoadForPlan(t.Context(), path)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

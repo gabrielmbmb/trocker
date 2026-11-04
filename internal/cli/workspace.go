@@ -12,36 +12,45 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gabrielmbmb/trocker/internal/config"
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
 	"github.com/gabrielmbmb/trocker/internal/state"
 )
 
 func newPlanCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "plan",
 		Short: "Preview workspace isolation and check ownership",
 		Args:  cobra.NoArgs,
 		RunE:  runPlan,
 	}
+	addProfileFlag(command)
+	return command
 }
 
 func newStatusCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show workspace containers and their state",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			profiles, err := profileSelection(command)
+			if err != nil {
+				return err
+			}
 			directory, store, err := queryLocation()
 			if err != nil {
 				return err
 			}
-			observation, err := lifecycle.Observe(command.Context(), directory, store)
+			observation, err := lifecycle.Observe(command.Context(), directory, store, profiles)
 			if err != nil {
 				return err
 			}
 			return writeStatus(command.OutOrStdout(), observation)
 		},
 	}
+	addProfileFlag(command)
+	return command
 }
 
 func newEndpointsCommand() *cobra.Command {
@@ -50,11 +59,15 @@ func newEndpointsCommand() *cobra.Command {
 		Short: "Show observed workspace addresses",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			profiles, err := profileSelection(command)
+			if err != nil {
+				return err
+			}
 			directory, store, err := queryLocation()
 			if err != nil {
 				return err
 			}
-			result, err := lifecycle.Endpoints(command.Context(), directory, store)
+			result, err := lifecycle.Endpoints(command.Context(), directory, store, profiles)
 			if err != nil {
 				return err
 			}
@@ -69,6 +82,7 @@ func newEndpointsCommand() *cobra.Command {
 		},
 	}
 	command.Flags().Bool("json", false, "Print endpoints as JSON")
+	addProfileFlag(command)
 	return command
 }
 
@@ -148,11 +162,15 @@ func writeEndpoints(out io.Writer, result lifecycle.EndpointResult) error {
 }
 
 func runPlan(command *cobra.Command, _ []string) error {
+	profiles, err := profileSelection(command)
+	if err != nil {
+		return err
+	}
 	directory, store, err := queryLocation()
 	if err != nil {
 		return err
 	}
-	result, err := lifecycle.Plan(command.Context(), directory, store)
+	result, err := lifecycle.Plan(command.Context(), directory, store, profiles)
 	if err != nil {
 		return err
 	}
@@ -164,7 +182,7 @@ func runPlan(command *cobra.Command, _ []string) error {
 	buildContexts := result.BuildContexts()
 	access := result.DockerAPIAccess()
 	hostAccess := result.HostAccess()
-	fmt.Fprintf(&message, "Workspace plan\n\n  Workspace  %s\n  Project    %s\n  Networks   %d isolated\n  Volumes    %d retained, isolated\n\n", result.Registration.ID, result.Project.Name, len(result.Project.Networks), len(result.Project.Volumes))
+	fmt.Fprintf(&message, "Workspace plan\n\n  Workspace  %s\n  Project    %s\n  Profiles   %s\n  Services   %d active\n  Networks   %d isolated\n  Volumes    %d retained, isolated\n\n", result.Registration.ID, result.Project.Name, config.ProfileSummary(result.Project.Profiles), len(result.Project.Services), len(result.Project.Networks), len(result.Project.Volumes))
 	for _, name := range result.Project.ServiceNames() {
 		service := result.Project.Services[name]
 		fmt.Fprintf(&message, "  %s: workspace identity, %d loopback publications\n", name, len(service.Ports))
@@ -254,10 +272,12 @@ func hostAccessSummary(access lifecycle.ServiceHostAccess) string {
 }
 
 func newDoctorCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check isolation, bindings, and resource ownership",
 		Args:  cobra.NoArgs,
 		RunE:  runPlan,
 	}
+	addProfileFlag(command)
+	return command
 }

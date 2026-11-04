@@ -19,6 +19,7 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §3.1 non-interactive registration | `init --dry-run` reports a digest and writes nothing; `init --confirm <digest>` registers only while the proposal still matches. The digest covers the effective manifest, the Docker target, creation, and relocation, and excludes the checkout path and identity, so one approval covers every worktree with that configuration. |
 | §3.4 no `logs` | `trocker logs [SERVICE...]` streams owned container logs without locks; `--follow`, `--tail`, `--since`, `--until`, and `--timestamps` map to the Compose log options. |
 | §3.5 no `exec`/`ps` | `trocker ps [--all] [--json]` reports the Compose project and container names, services, states, and health; `trocker exec SERVICE COMMAND...` addresses containers by service name and preserves the child exit status. |
+| §3.6 profiles are environment-only | `profiles:` in `trocker.yaml` selects Compose profiles explicitly; `--profile` overrides it on `plan`, `doctor`, `up`, `run`, `status`, and `endpoints`; `COMPOSE_PROFILES` remains the fallback. `plan`/`doctor` report active profiles and service count. |
 
 Re-verified against the adopter with a rebuilt binary: the full declaration set loads and builds with default profiles (16 active services) and with all five profiles enabled (21 services). Removing each declaration on its own is still rejected, naming the service and the path — `read_write_paths`, `shared_write_paths`, `docker_socket_services`, `host_access`, and, once `kennedy-frontend` is active, `build_contexts`.
 
@@ -131,11 +132,11 @@ Resolved by `trocker logs [SERVICE...]`: it reads logs from the workspace's owne
 
 Resolved by service-name addressing: `trocker exec SERVICE COMMAND...` runs in the current worktree's container and propagates its exit status, while `trocker ps --json` reports the Compose `project` alongside container names, services, states, and health. The original blocker was that `container_name` is removed by design, `status` had no `--json`, and no command exposed the Compose project name as a documented result: `endpoints --json` reports `workspace_id`, from which the project name can be *derived*, but deriving it is not a contract. Every test recipe in the adopter resolved a container by name, so this was the difference between `docker exec <name> pytest` and a label-filtered `docker ps` dance.
 
-### 3.6 Profiles are environment-only
+### 3.6 Profiles are environment-only (resolved)
 
-There is no reference to `Profiles` anywhere in `internal/`, and no `--profile` flag on any command: profile-gated services appear purely because `COMPOSE_PROFILES` happened to be set in the invoking shell. The manifest cannot declare which services it wants, so `plan` in a shell without the variable fails with `endpoint service is not selected`, which points at the manifest rather than at the environment. A manifest-level service selection, or at least a `--profile` pass-through on `plan`/`up`/`down`, would make the failure self-explanatory.
+Resolved by adding `profiles:` to `trocker.yaml` and a repeatable `--profile` override on `plan`, `doctor`, `up`, `run`, `status`, and `endpoints`. A nonempty manifest or CLI selection replaces `COMPOSE_PROFILES`; an omitted or empty manifest list preserves the environment fallback. `*` activates all profiles. `plan` and `doctor` report the active profiles and resulting service count, and inactive-service diagnostics name the required profile and the currently active set.
 
-This is not only cosmetic. `ValidateProject` requires every `endpoints` and `bindings` service to be active, so a checked-in manifest that declares a host address for a profile-gated app fails validation unless the profile happens to be enabled. In the adopter, the three Next.js apps that most need browser-facing addresses are all profile-gated, so `endpoints` and `bindings` cannot cover them without making the manifest depend on the invoking shell. The same `trocker.yaml` then passes in one terminal and fails in another.
+This removes the shell dependency that previously made `ValidateProject` reject endpoints and bindings for profile-gated services in one terminal and accept them in another. `trocker up --detach SERVICE` now works with `profiles: [SERVICE]` even when `COMPOSE_PROFILES` is unset.
 
 ### 3.7 New-worktree state seeding has no hook
 
@@ -179,7 +180,7 @@ Ordered by services unblocked per unit of design risk, not by implementation cos
 | 5 | Declarable host port (§2.1–§2.3) | OAuth/OIDC, CORS, WebAuthn, webhooks | Still one owner per port; fail, never fall back |
 | ~~6~~ | ~~`ps --json` / `logs` / `exec` (§3.4, §3.5)~~ | Resolved: test and debugging recipes address services, not container names | No allocation or workspace mutation locks |
 | 7 | Deny-list completeness test (§4) | Confidence in the isolation claim | None — it is a test |
-| 8 | `--profile` pass-through, `deploy` subkey granularity, explicit-name rejection wording (§1.4, §1.5, §3.6) | Projects with ordinary Compose hygiene | None |
+| 8 | `deploy` subkey granularity, explicit-name rejection wording (§1.4, §1.5) | Projects with ordinary Compose hygiene | None |
 
 Item 4 is now the highest-ranked open item, and items 5–8 are what make adoption pleasant.
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +86,7 @@ func TestUpRetryIsolationAndVolumeRetention(t *testing.T) {
 	defer cancel()
 	main, store, registration, target := upWorkspace(t, ctx)
 	before := snapshotObservationFiles(t, main, store.Directory)
-	prepared, err := lifecycle.Plan(ctx, main, store)
+	prepared, err := lifecycle.Plan(ctx, main, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +174,48 @@ func TestUpBuildAndServiceSelection(t *testing.T) {
 	}
 	if image.Config.Labels[compose.WorkspaceLabel] != registration.ID {
 		t.Fatal("build image lacks ownership")
+	}
+}
+
+func TestProfileGatedServicePlanUpAndDown(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	const composeContent = `services:
+  api:
+    image: busybox:1.37
+    command: [sleep, '300']
+  gated:
+    image: busybox:1.37
+    command: [sleep, '300']
+    expose: ['8000']
+    profiles: [extra]
+`
+	const manifest = "version: 1\ncompose: [compose.yaml]\nprofiles: [extra]\nendpoints:\n  gated: {service: gated, port: 8000, scheme: http}\n"
+	main, store, registration, target := workspaceFixture(t, ctx, composeContent, manifest)
+	preview, err := lifecycle.Plan(ctx, main, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Project.Services) != 2 || !slices.Equal(preview.Project.Profiles, []string{"extra"}) {
+		t.Fatalf("plan profiles/services = %v/%v", preview.Project.Profiles, preview.Project.ServiceNames())
+	}
+	result, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true, Services: []string{"gated"}}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Endpoints) != 1 || result.Endpoints[0].Name != "gated" || result.Endpoints[0].State != "published" {
+		t.Fatalf("profile-gated endpoint = %+v", result.Endpoints)
+	}
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
+	if err != nil || len(containers) != 1 || containers[0].Service != "gated" {
+		t.Fatalf("selected profile-gated service containers = %v, %v", containers, err)
+	}
+	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Down}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	containers, err = target.Containers(ctx, registration, api.PsOptions{All: true})
+	if err != nil || len(containers) != 0 {
+		t.Fatalf("down retained profile-gated containers: %v, %v", containers, err)
 	}
 }
 
@@ -434,7 +477,7 @@ func TestUpRejectsForeignRetainedResources(t *testing.T) {
 					}
 				})
 			}
-			if _, err := lifecycle.Plan(ctx, main, store); err == nil || !strings.Contains(err.Error(), "ownership") {
+			if _, err := lifecycle.Plan(ctx, main, store, nil); err == nil || !strings.Contains(err.Error(), "ownership") {
 				t.Fatalf("plan accepted foreign %s: %v", kind, err)
 			}
 			if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard); err == nil || !strings.Contains(err.Error(), "ownership") {

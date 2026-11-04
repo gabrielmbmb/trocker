@@ -43,7 +43,7 @@ bindings:
 	t.Setenv("TROCKER_TEST_NATIVE_LIFECYCLE", "1")
 	t.Setenv("TROCKER_WORKSPACE_ID", "imposter")
 	var output bytes.Buffer
-	if err := lifecycle.Run(ctx, main, store, "api", nativeArguments(t), native.Streams{Out: &output, Err: io.Discard}); err == nil || output.Len() != 0 {
+	if err := lifecycle.Run(ctx, main, store, "api", nil, nativeArguments(t), native.Streams{Out: &output, Err: io.Discard}); err == nil || output.Len() != 0 {
 		t.Fatal("missing dependency launched child", err)
 	}
 	result, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard)
@@ -56,7 +56,7 @@ bindings:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.Run(ctx, main, store, "api", nativeArguments(t), native.Streams{Out: &output, Err: io.Discard}); err != nil {
+	if err := lifecycle.Run(ctx, main, store, "api", nil, nativeArguments(t), native.Streams{Out: &output, Err: io.Discard}); err != nil {
 		t.Fatal(err)
 	}
 	var received nativeReport
@@ -77,7 +77,7 @@ bindings:
 		t.Fatal(err)
 	}
 	output.Reset()
-	if err := lifecycle.Run(ctx, main, store, "api", nativeArguments(t), native.Streams{Out: &output, Err: io.Discard}); err == nil || output.Len() != 0 {
+	if err := lifecycle.Run(ctx, main, store, "api", nil, nativeArguments(t), native.Streams{Out: &output, Err: io.Discard}); err == nil || output.Len() != 0 {
 		t.Fatal("stopped dependency launched child", err)
 	}
 }
@@ -102,7 +102,7 @@ func TestGeneratedFileClientUsesObservedEndpoint(t *testing.T) {
 	t.Setenv("TROCKER_TEST_NATIVE_FILE", "1")
 	var output bytes.Buffer
 	run := func() error {
-		return lifecycle.Run(ctx, main, store, "api", nativeArguments(t), native.Streams{Out: &output, Err: io.Discard})
+		return lifecycle.Run(ctx, main, store, "api", nil, nativeArguments(t), native.Streams{Out: &output, Err: io.Discard})
 	}
 	if err := run(); err == nil || output.Len() != 0 {
 		t.Fatal("missing file dependency launched a child", err)
@@ -116,7 +116,7 @@ func TestGeneratedFileClientUsesObservedEndpoint(t *testing.T) {
 	}
 	token := readEndpointToken(t, ctx, started)
 	before := snapshotObservationFiles(t, main, store.Directory)
-	preview, err := lifecycle.Plan(ctx, main, store)
+	preview, err := lifecycle.Plan(ctx, main, store, nil)
 	if err != nil || preview.NativeFiles != 1 || !reflect.DeepEqual(before, snapshotObservationFiles(t, main, store.Directory)) {
 		t.Fatal("plan missed native template or changed files", err)
 	}

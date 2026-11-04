@@ -12,6 +12,7 @@ import (
 
 type UpOptions struct {
 	Services []string
+	Profiles []string
 	Detach   bool
 	Build    bool
 }

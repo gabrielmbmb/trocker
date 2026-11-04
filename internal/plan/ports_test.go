@@ -12,7 +12,7 @@ import (
 
 func TestAllocatedBindingsAndAliases(t *testing.T) {
 	_, path := fixture(t, "services:\n  api: {image: busybox, expose: ['8000','9000']}\n  web: {image: busybox, depends_on: [api]}\n")
-	manifest, source, err := compose.LoadForPlan(t.Context(), path)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

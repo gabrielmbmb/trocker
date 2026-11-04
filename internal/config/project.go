@@ -7,18 +7,18 @@ import "github.com/compose-spec/compose-go/v2/types"
 func (m *Manifest) ValidateProject(project *types.Project) error {
 	for _, service := range m.DockerSocketServices {
 		if _, exists := project.Services[service]; !exists {
-			return invalid("docker_socket_services", "service "+service+" is missing or inactive")
+			return inactiveServiceError("docker_socket_services", service, project)
 		}
 	}
 	for service := range m.HostAccess {
 		if _, exists := project.Services[service]; !exists {
-			return invalid("host_access", "service "+service+" is missing or inactive")
+			return inactiveServiceError("host_access", service, project)
 		}
 	}
 	for name, endpoint := range m.Endpoints {
 		service, exists := project.Services[endpoint.Service]
 		if !exists {
-			return invalid("endpoints."+name+".service", "service is missing or inactive")
+			return inactiveServiceError("endpoints."+name+".service", endpoint.Service, project)
 		}
 		declared := false
 		for _, port := range service.Ports {
@@ -44,11 +44,23 @@ func (m *Manifest) ValidateProject(project *types.Project) error {
 	for service, bindings := range m.Bindings {
 		definition, exists := project.Services[service]
 		if !exists {
-			return invalid("bindings."+service, "service is missing or inactive")
+			return inactiveServiceError("bindings."+service, service, project)
 		}
 		if err := validateProjectFiles(bindings.Files, definition); err != nil {
 			return invalid("bindings."+service+".files", err.Error())
 		}
 	}
 	return nil
+}
+
+// inactiveServiceError names the profiles a referenced service needs and the
+// profiles that are already active, so a mismatch is not blamed on the
+// manifest or the shell without explanation.
+func inactiveServiceError(field, service string, project *types.Project) error {
+	problem := "service " + service + " is missing or inactive"
+	if definition, disabled := project.DisabledServices[service]; disabled && len(definition.Profiles) > 0 {
+		problem += "; add " + ProfileSummary(definition.Profiles) + " to profiles in trocker.yaml"
+	}
+	problem += "; active profiles: " + ProfileSummary(project.Profiles)
+	return invalid(field, problem)
 }

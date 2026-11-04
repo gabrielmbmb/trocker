@@ -70,7 +70,7 @@ func TestNativeRunWithoutEndpointReferencesIsOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output, diagnostics bytes.Buffer
-	if err := lifecycle.Run(t.Context(), main, store, "app", nativeArguments(t), native.Streams{Out: &output, Err: &diagnostics}); err != nil {
+	if err := lifecycle.Run(t.Context(), main, store, "app", nil, nativeArguments(t), native.Streams{Out: &output, Err: &diagnostics}); err != nil {
 		t.Fatal(err)
 	}
 	var received nativeReport
@@ -90,7 +90,7 @@ func TestNativeRunWithoutEndpointReferencesIsOffline(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("run rewrote registry")
 	}
-	if err := lifecycle.Run(t.Context(), main, store, "missing", nativeArguments(t), native.Streams{Out: io.Discard, Err: io.Discard}); err == nil {
+	if err := lifecycle.Run(t.Context(), main, store, "missing", nil, nativeArguments(t), native.Streams{Out: io.Discard, Err: io.Discard}); err == nil {
 		t.Fatal("unknown service launched")
 	}
 
@@ -237,7 +237,7 @@ func TestNativeGeneratedConfigurationSnapshots(t *testing.T) {
 	run := func() (nativeReport, error) {
 		t.Helper()
 		var output bytes.Buffer
-		err := lifecycle.Run(t.Context(), subdirectory, store, "app", nativeArguments(t), native.Streams{Out: &output, Err: io.Discard})
+		err := lifecycle.Run(t.Context(), subdirectory, store, "app", nil, nativeArguments(t), native.Streams{Out: &output, Err: io.Discard})
 		var report nativeReport
 		if err != nil {
 			if output.Len() != 0 {
@@ -301,7 +301,7 @@ func TestNativeGeneratedConfigurationSnapshots(t *testing.T) {
 	if err := os.WriteFile(template, []byte("{{ DO_NOT_PRINT_SECRET }}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := lifecycle.Plan(t.Context(), main, store); err == nil || !strings.Contains(err.Error(), "template syntax") {
+	if _, err := lifecycle.Plan(t.Context(), main, store, nil); err == nil || !strings.Contains(err.Error(), "template syntax") {
 		t.Fatal("plan missed invalid template", err)
 	}
 	called := false
@@ -346,7 +346,7 @@ func assertNativeDoesNotHoldLocks(t *testing.T, main string, store state.Store, 
 	args := nativeArguments(t)
 	done := make(chan error, 1)
 	go func() {
-		err := lifecycle.Run(ctx, main, store, "app", args, native.Streams{In: input, Out: receive, Err: io.Discard})
+		err := lifecycle.Run(ctx, main, store, "app", nil, args, native.Streams{In: input, Out: receive, Err: io.Discard})
 		done <- errors.Join(err, receive.Close())
 	}()
 	var ready nativeReport

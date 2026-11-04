@@ -20,23 +20,23 @@ import (
 
 // Run observes dependencies without starting them. File publication takes only
 // a short consumer lock; no port claims or locks span the native child lifetime.
-func Run(ctx context.Context, directory string, store state.Store, service string, args []string, streams native.Streams) error {
+func Run(ctx context.Context, directory string, store state.Store, service string, profiles, args []string, streams native.Streams) error {
 	if err := native.CheckSupport(); err != nil {
 		return err
 	}
-	environment, err := prepareNative(ctx, directory, store, service)
+	environment, err := prepareNative(ctx, directory, store, service, profiles)
 	if err != nil {
 		return err
 	}
 	return native.Run(ctx, native.Options{Args: args, Directory: directory, Environment: environment, Streams: streams})
 }
 
-func prepareNative(ctx context.Context, directory string, store state.Store, service string) (map[string]string, error) {
+func prepareNative(ctx context.Context, directory string, store state.Store, service string, profiles []string) (map[string]string, error) {
 	registration, err := registeredWorkspace(ctx, directory, store)
 	if err != nil {
 		return nil, err
 	}
-	manifest, project, err := compose.Load(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"))
+	manifest, project, err := compose.Load(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"), profiles)
 	if err != nil {
 		return nil, err
 	}

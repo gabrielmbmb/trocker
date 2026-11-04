@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestContractFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			manifest, project, err := compose.Load(t.Context(), path)
+			manifest, project, err := compose.Load(t.Context(), path, nil)
 			if test.field == "" {
 				if err != nil {
 					t.Fatalf("%v (cause: %v)", err, errors.Unwrap(err))
@@ -94,7 +95,7 @@ services:
 	callerDirectory := t.TempDir()
 	writeFile(t, callerDirectory, ".env", "TROCKER_TEST_IMAGE=wrong:latest\n")
 	t.Chdir(callerDirectory)
-	_, project, err := compose.Load(t.Context(), filepath.Join(directory, "trocker.yaml"))
+	_, project, err := compose.Load(t.Context(), filepath.Join(directory, "trocker.yaml"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestSDKPortNormalizationAndProfiles(t *testing.T) {
 			directory := t.TempDir()
 			writeFile(t, directory, "compose.yaml", "name: fixture\nservices:\n  backend:\n    image: busybox\n    "+test.port+"\n")
 			path := writeFile(t, directory, "trocker.yaml", "version: 1\ncompose: [compose.yaml]\nendpoints: {api: {service: backend, port: 8000, scheme: http}}\n")
-			_, _, err := compose.Load(t.Context(), path)
+			_, _, err := compose.Load(t.Context(), path, nil)
 			if test.field == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -145,6 +146,107 @@ func TestSDKPortNormalizationAndProfiles(t *testing.T) {
 	}
 }
 
+func TestManifestProfileSelection(t *testing.T) {
+	const profileCompose = `name: fixture
+services:
+  always:
+    image: busybox
+  debugger:
+    image: busybox
+    profiles: [debug]
+  other:
+    image: busybox
+    profiles: [other]
+`
+	for _, test := range []struct {
+		name     string
+		profiles string
+		env      string
+		override []string
+		want     []string
+	}{
+		{name: "manifest replaces environment", profiles: "profiles: [debug]\n", env: "other", want: []string{"always", "debugger"}},
+		{name: "environment without manifest", env: "debug", want: []string{"always", "debugger"}},
+		{name: "empty manifest preserves environment", profiles: "profiles: []\n", env: "debug", want: []string{"always", "debugger"}},
+		{name: "explicit override replaces manifest", profiles: "profiles: [debug]\n", override: []string{"other"}, want: []string{"always", "other"}},
+		{name: "manifest replaces wildcard environment", profiles: "profiles: [debug]\n", env: "*", want: []string{"always", "debugger"}},
+		{name: "wildcard activates all", profiles: "profiles: ['*']\n", env: "other", want: []string{"always", "debugger", "other"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cleanEnvironment(t)
+			directory := t.TempDir()
+			writeFile(t, directory, "compose.yaml", profileCompose)
+			path := writeFile(t, directory, "trocker.yaml", "version: 1\ncompose: [compose.yaml]\n"+test.profiles)
+			if test.env != "" {
+				t.Setenv("COMPOSE_PROFILES", test.env)
+			}
+			_, project, err := compose.Load(t.Context(), path, test.override)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(project.ServiceNames(), test.want) {
+				t.Fatalf("active services = %v, want %v", project.ServiceNames(), test.want)
+			}
+		})
+	}
+}
+
+func TestProfileGatedEndpointValidation(t *testing.T) {
+	const composeContent = "name: fixture\nservices:\n  backend:\n    image: busybox\n    expose: ['8000']\n    profiles: [debug]\n"
+	const endpoint = "endpoints: {api: {service: backend, port: 8000, scheme: http}}\n"
+	for _, test := range []struct {
+		name     string
+		profiles string
+		env      string
+		valid    bool
+	}{
+		{name: "inactive without selection"},
+		{name: "manifest selects profile", profiles: "profiles: [debug]\n", valid: true},
+		{name: "environment selects profile", env: "debug", valid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cleanEnvironment(t)
+			directory := t.TempDir()
+			writeFile(t, directory, "compose.yaml", composeContent)
+			path := writeFile(t, directory, "trocker.yaml", "version: 1\ncompose: [compose.yaml]\n"+test.profiles+endpoint)
+			if test.env != "" {
+				t.Setenv("COMPOSE_PROFILES", test.env)
+			}
+			_, _, err := compose.Load(t.Context(), path, nil)
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var validation *config.Error
+			if !errors.As(err, &validation) || validation.Field != "endpoints.api.service" {
+				t.Fatalf("error = %v, want inactive endpoint service", err)
+			}
+			for _, want := range []string{"debug", "profiles in trocker.yaml", "active profiles: none"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not explain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestUnknownExplicitProfileExplainsAvailableProfiles(t *testing.T) {
+	cleanEnvironment(t)
+	directory := t.TempDir()
+	writeFile(t, directory, "compose.yaml", "name: fixture\nservices:\n  debugger:\n    image: busybox\n    profiles: [debug]\n")
+	path := writeFile(t, directory, "trocker.yaml", "version: 1\ncompose: [compose.yaml]\nprofiles: [typo]\n")
+	_, _, err := compose.Load(t.Context(), path, nil)
+	if err == nil || !strings.Contains(err.Error(), "typo") || !strings.Contains(err.Error(), "not declared") {
+		t.Fatalf("unexpected unknown profile error: %v", err)
+	}
+	var diagnostic interface{ Help() string }
+	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Help(), "debug") {
+		t.Fatalf("unknown profile has no available-profile guidance: %v", err)
+	}
+}
+
 func TestFailuresAndCancellation(t *testing.T) {
 	cleanEnvironment(t)
 	for _, content := range []string{
@@ -156,7 +258,7 @@ func TestFailuresAndCancellation(t *testing.T) {
 		composePath := writeFile(t, directory, "compose.yaml", content)
 		manifestContent := "version: 1\ncompose: [compose.yaml]\n"
 		path := writeFile(t, directory, "trocker.yaml", manifestContent)
-		manifest, project, err := compose.Load(t.Context(), path)
+		manifest, project, err := compose.Load(t.Context(), path, nil)
 		if err == nil || strings.Contains(err.Error(), "do-not-print") {
 			t.Fatalf("unexpected diagnostic: %v", err)
 		}
@@ -182,12 +284,12 @@ func TestFailuresAndCancellation(t *testing.T) {
 	}
 	directory := t.TempDir()
 	path := writeFile(t, directory, "trocker.yaml", "version: 1\ncompose: [missing.yaml]\n")
-	if _, _, err := compose.Load(t.Context(), path); err == nil || !strings.Contains(err.Error(), "a referenced Compose file does not exist") {
+	if _, _, err := compose.Load(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), "a referenced Compose file does not exist") {
 		t.Fatalf("missing Compose file diagnostic = %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, _, err := compose.Load(ctx, path); !errors.Is(err, context.Canceled) {
+	if _, _, err := compose.Load(ctx, path, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
 }

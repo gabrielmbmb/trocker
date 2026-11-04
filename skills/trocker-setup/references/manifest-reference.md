@@ -8,6 +8,7 @@
 version: 1
 compose:
   - compose.yaml
+profiles: []
 read_write_paths: []
 shared_write_paths: []
 build_contexts: []
@@ -17,7 +18,7 @@ endpoints: {}
 bindings: {}
 ```
 
-`read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`profiles`, `read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -57,6 +58,24 @@ Required, nonempty, ordered list of nonempty file paths.
 - Scalar shorthand is not supported; use a YAML list.
 
 The Compose project name comes from Trocker's workspace identity. Do not try to set or preserve a Compose `name` through this field.
+
+### `profiles`
+
+Optional ordered list of Compose profiles to activate.
+
+```yaml
+profiles:
+  - workos-local
+  - n8n
+```
+
+- A nonempty list replaces `COMPOSE_PROFILES` from the environment or project `.env`. This keeps profile-gated services, endpoints, and bindings deterministic across shells.
+- `*` activates every profile. It must be the profile name, not a glob.
+- Names use `[A-Za-z0-9][A-Za-z0-9_.-]*`; empty names, duplicates, and invalid names are rejected.
+- An empty list is the same as omitting the field: the environment fallback remains in effect.
+- An explicit profile that no Compose service declares is reported with the profiles that are available.
+- `--profile` on `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` overrides the manifest for that command. `plan` and `doctor` report the active profiles and service count.
+- Commands that operate on existing resources (`start`, `stop`, `down`, `release`, `ls`, `ps`, `logs`, `exec`) do not load Compose and do not take a profile selection.
 
 ### `read_write_paths`
 

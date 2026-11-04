@@ -54,7 +54,7 @@ func TestPlanIsIsolatedAndDoesNotMutateInputs(t *testing.T) {
 volumes:
   data:
 `)
-	manifest, source, err := compose.LoadForPlan(t.Context(), path)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +115,44 @@ volumes:
 	}
 }
 
+func TestInactiveServiceSelectionExplainsProfiles(t *testing.T) {
+	_, path := fixture(t, `services:
+  api:
+    image: busybox:1.37
+  debugger:
+    image: busybox:1.37
+    profiles: [debug]
+`)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = plan.Build(manifest, source, workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}, plan.Options{Services: []string{"debugger"}})
+	if err == nil {
+		t.Fatal("inactive service was selected")
+	}
+	for _, want := range []string{"debugger", "inactive", "debug"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not name %q", err, want)
+		}
+	}
+	var diagnostic interface {
+		Help() string
+		Note() string
+	}
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("selection error has no guidance: %v", err)
+	}
+	for _, want := range []string{"profiles in trocker.yaml", "--profile debug"} {
+		if !strings.Contains(diagnostic.Help(), want) {
+			t.Fatalf("help %q does not explain %q", diagnostic.Help(), want)
+		}
+	}
+	if !strings.Contains(diagnostic.Note(), "active profiles: none") {
+		t.Fatalf("note does not report active profiles: %q", diagnostic.Note())
+	}
+}
+
 func TestWritableMountsRequireDeclaredPaths(t *testing.T) {
 	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
 	withPaths := func(paths string) string {
@@ -164,7 +202,7 @@ func TestWritableMountsRequireDeclaredPaths(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,7 +300,7 @@ func TestDockerSocketAccessRequiresServiceOptIn(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -309,7 +347,7 @@ func TestUnsupportedConfigurationsFailBeforeMutation(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, path := fixture(t, content)
-			manifest, source, err := compose.LoadForPlan(t.Context(), path)
+			manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
 			if err == nil {
 				_, err = plan.Build(manifest, source, workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}, plan.Options{})
 			}
@@ -322,7 +360,7 @@ func TestUnsupportedConfigurationsFailBeforeMutation(t *testing.T) {
 
 func TestHostBindingsRequireAllocation(t *testing.T) {
 	_, path := fixture(t, "services: {api: {image: busybox, expose: ['8000']}}")
-	manifest, source, err := compose.LoadForPlan(t.Context(), path)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +513,7 @@ func TestHostAccessRequiresServiceGrant(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -560,7 +598,7 @@ func TestBuildContextsRequireDeclaredPaths(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -649,7 +687,7 @@ func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest))
+			manifest, source, err := compose.LoadForPlan(t.Context(), fixtureWith(t, test.compose, test.manifest), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

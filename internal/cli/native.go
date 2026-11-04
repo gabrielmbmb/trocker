@@ -10,7 +10,7 @@ import (
 )
 
 func newRunCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "run SERVICE -- COMMAND [ARG...]",
 		Short: "Run a local foreground process with native service bindings",
 		Long:  "Run a local command in the current directory with native bindings from existing dependencies.\nDependencies must already be running. Explicit native files are rendered before launch.\nSupported on Linux and macOS.",
@@ -21,12 +21,18 @@ func newRunCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(command *cobra.Command, args []string) error {
+			profiles, err := profileSelection(command)
+			if err != nil {
+				return err
+			}
 			directory, store, err := queryLocation()
 			if err != nil {
 				return err
 			}
 			output := rawCommandOutput(command)
-			return lifecycle.Run(command.Context(), directory, store, args[0], args[1:], native.Streams{In: command.InOrStdin(), Out: output, Err: command.ErrOrStderr()})
+			return lifecycle.Run(command.Context(), directory, store, args[0], profiles, args[1:], native.Streams{In: command.InOrStdin(), Out: output, Err: command.ErrOrStderr()})
 		},
 	}
+	addProfileFlag(command)
+	return command
 }

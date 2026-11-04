@@ -57,7 +57,7 @@ If `trocker.yaml` is absent:
 trocker init
 ```
 
-Run it in a real terminal or PTY. The user must see the proposal and confirm it. The generated manifest contains only the SDK-selected top-level Compose files; empty `read_write_paths: []`, `docker_socket_services: []`, `host_access: {}`, `endpoints: {}`, and `bindings: {}` are expected at this stage.
+Run it in a real terminal or PTY. The user must see the proposal and confirm it. The generated manifest contains only the SDK-selected top-level Compose files; empty `profiles: []`, `read_write_paths: []`, `docker_socket_services: []`, `host_access: {}`, `endpoints: {}`, and `bindings: {}` are expected at this stage.
 
 Without a terminal, the same confirmation is available as a digest, and the agent still does not approve it:
 
@@ -88,7 +88,7 @@ Read [Compose analysis](references/compose-analysis.md) before deciding what bel
   - service `extends.file` references;
   - explicit top-level overrides selected by `COMPOSE_FILE` or SDK defaults.
 - Resolve paths with Compose semantics relative to the active Compose project directory. Trocker uses the manifest directory as the project working directory, so a top-level file in `deploy/` resolves `include` and `extends.file` from the repository root, not from `deploy/`. An included file's own includes default to that included file's directory (or its declared `project_directory`). Account for the `project_directory` and `env_file` options when present.
-- Determine which services are actually active. Profile-gated services must be active through the environment when Trocker is used; there is no profile flag in `trocker.yaml`.
+- Determine which services are actually active. Profile-gated services are selected explicitly with `profiles:` in `trocker.yaml`; when the manifest omits profiles, `COMPOSE_PROFILES` from the environment or `.env` remains the fallback. A repeatable `--profile` overrides the manifest for one `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` command.
 - Build an inventory of services, declared container ports (`ports[].target` and `expose`), profiles, networks, volumes, bind mounts (writable or read-only, including Docker socket mounts), `build.additional_contexts`, `pid`, `ipc`, `cap_add`, `devices`, unsupported features, and every environment key whose value is a service address.
 - Distinguish top-level files from included files. If init proposed the wrong ones, decline, correct the selection, and retry.
 
@@ -218,7 +218,7 @@ Check every endpoint:
 - Use one clear alias per scheme. YAML duplicate keys are rejected.
 - Declare a second alias for one service port when consumers need two schemes, such as `gateway` on `http` and `gateway_ws` on `ws`. Aliases of one port share a single publication.
 - A container port that the service declares neither in `ports` nor in `expose` cannot be an endpoint, even when another service addresses it. Report the Compose declaration that would be needed; that address cannot be bound until it exists.
-- An endpoint or binding must name an active service, so declaring one for a service behind an inactive profile fails validation for the whole manifest. Treat the profile as a prerequisite for every Trocker command, or leave that service unwired and report it.
+- An endpoint or binding must name an active service. For a profile-gated service, add its profile under `profiles:` in `trocker.yaml` before declaring the endpoint or binding. An inactive reference fails validation and names both the required profile and the active set.
 
 When the scheme, listening port, or consumer is ambiguous, ask the user or omit the endpoint. A smaller valid manifest is better than an invented one.
 

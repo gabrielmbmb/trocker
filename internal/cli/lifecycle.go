@@ -15,6 +15,10 @@ func newUpCommand() *cobra.Command {
 		Short: "Create and start the isolated workspace stack",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(command *cobra.Command, services []string) error {
+			profiles, err := profileSelection(command)
+			if err != nil {
+				return err
+			}
 			directory, store, err := queryLocation()
 			if err != nil {
 				return err
@@ -27,7 +31,7 @@ func newUpCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := lifecycle.Up(command.Context(), directory, store, compose.UpOptions{Services: services, Detach: detach, Build: build}, command.ErrOrStderr())
+			result, err := lifecycle.Up(command.Context(), directory, store, compose.UpOptions{Services: services, Profiles: profiles, Detach: detach, Build: build}, command.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -43,6 +47,7 @@ func newUpCommand() *cobra.Command {
 	}
 	command.Flags().BoolP("detach", "d", false, "Run containers in the background")
 	command.Flags().Bool("build", false, "Build images before starting containers")
+	addProfileFlag(command)
 	return command
 }
 

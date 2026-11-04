@@ -148,7 +148,7 @@ func prepareInitManifest(ctx context.Context, root string) (original, proposed [
 	path := filepath.Join(root, "trocker.yaml")
 	original, err = os.ReadFile(path) //nolint:gosec // Manifest path is within the discovered checkout.
 	if err == nil {
-		manifest, _, err := compose.Load(ctx, path)
+		manifest, _, err := compose.Load(ctx, path, nil)
 		if err == nil {
 			_, err = generated.Validate(ctx, manifest)
 		}
