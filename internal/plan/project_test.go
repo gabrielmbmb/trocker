@@ -3,8 +3,10 @@ package plan_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -652,8 +654,17 @@ func TestBuildContextsRequireDeclaredPaths(t *testing.T) {
 
 func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
 	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
-	withPaths := func(paths string) string {
-		return "version: 1\ncompose: [compose.yaml]\nshared_write_paths: [" + paths + "]\n"
+	shared := filepath.Join(t.TempDir(), "shared")
+	nested := filepath.Join(shared, "nested")
+	sibling := shared + "-extra"
+	withPaths := func(path string) string {
+		return "version: 1\ncompose: [compose.yaml]\nshared_write_paths: [" + strconv.Quote(path) + "]\n"
+	}
+	shortMount := func(source, target string) string {
+		return fmt.Sprintf("services: {api: {image: busybox, volumes: [%s]}}", strconv.Quote(source+":"+target))
+	}
+	longMount := func(source, target string) string {
+		return fmt.Sprintf("services: {api: {image: busybox, volumes: [{type: bind, source: %s, target: %s}]}}", strconv.Quote(source), strconv.Quote(target))
 	}
 	const undeclared = "version: 1\ncompose: [compose.yaml]\n"
 	for _, test := range []struct {
@@ -665,47 +676,47 @@ func TestSharedWritePathsAllowExternalMountsWithoutCreatingThem(t *testing.T) {
 	}{
 		{
 			name:     "declared external path",
-			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache']}}",
-			manifest: withPaths("/var/cache/shared"),
+			compose:  shortMount(shared, "/cache"),
+			manifest: withPaths(shared),
 		},
 		{
 			name:     "nested under declared external path",
-			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared/nested:/cache']}}",
-			manifest: withPaths("/var/cache/shared"),
+			compose:  shortMount(nested, "/cache"),
+			manifest: withPaths(shared),
 		},
 		{
 			name:     "long syntax",
-			compose:  "services: {api: {image: busybox, volumes: [{type: bind, source: /var/cache/shared, target: /cache}]}}",
-			manifest: withPaths("/var/cache/shared"),
+			compose:  longMount(shared, "/cache"),
+			manifest: withPaths(shared),
 		},
 		{
 			name:     "sibling prefix",
-			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared-extra:/cache']}}",
-			manifest: withPaths("/var/cache/shared"),
+			compose:  shortMount(sibling, "/cache"),
+			manifest: withPaths(shared),
 			problem:  "not declared in shared_write_paths",
 		},
 		{
 			name:     "undeclared external path",
-			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache']}}",
+			compose:  shortMount(shared, "/cache"),
 			manifest: undeclared,
 			problem:  "outside the checkout and not declared in shared_write_paths",
 		},
 		{
 			name:     "read-only external path needs no declaration",
-			compose:  "services: {api: {image: busybox, volumes: ['/var/cache/shared:/cache:ro']}}",
+			compose:  shortMount(shared, "/cache:ro"),
 			manifest: undeclared,
 			readOnly: true,
 		},
 		{
 			name:     "shared path does not authorize a checkout path",
-			compose:  "services: {api: {image: busybox, volumes: ['./data:/data']}}",
-			manifest: withPaths("/var/cache/shared"),
+			compose:  shortMount("./data", "/data"),
+			manifest: withPaths(shared),
 			problem:  "not declared in read_write_paths",
 		},
 		{
 			name:     "shared path does not authorize the docker socket",
-			compose:  "services: {api: {image: busybox, volumes: ['/var/run/docker.sock:/var/run/docker.sock']}}",
-			manifest: withPaths("/var/run"),
+			compose:  shortMount(filepath.Join(shared, "docker.sock"), "/var/run/docker.sock"),
+			manifest: withPaths(shared),
 			problem:  "not declared in docker_socket_services",
 		},
 	} {

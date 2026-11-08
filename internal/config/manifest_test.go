@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -417,6 +418,10 @@ func TestLoadResolvesAndConfinesSharedWritePaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	root := string(filepath.Separator)
+	if volume := filepath.VolumeName(home); volume != "" {
+		root = volume + string(filepath.Separator)
+	}
 	checkout := filepath.Join(home, "workspace", "checkout")
 	if err := os.MkdirAll(checkout, 0o700); err != nil {
 		t.Fatal(err)
@@ -429,8 +434,8 @@ func TestLoadResolvesAndConfinesSharedWritePaths(t *testing.T) {
 	}{
 		{name: "home relative", value: "~/.aws/sso/cache", want: filepath.Join(home, ".aws", "sso", "cache")},
 		{name: "absolute", value: filepath.Join(home, "cache"), want: filepath.Join(home, "cache")},
-		{name: "home directory", value: "'~'", problem: "not the home directory itself"},
-		{name: "filesystem root", value: string(filepath.Separator), problem: "below the filesystem root"},
+		{name: "home directory", value: "~", problem: "not the home directory itself"},
+		{name: "filesystem root", value: root, problem: "below the filesystem root"},
 		{name: "named home", value: "~other/.aws", problem: "named home directories are not supported"},
 		{name: "relative", value: "cache", problem: "expected ~/ or an absolute path"},
 		{name: "inside checkout", value: filepath.Join(checkout, "data"), problem: "use read_write_paths for checkout paths"},
@@ -438,7 +443,7 @@ func TestLoadResolvesAndConfinesSharedWritePaths(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			manifestPath := filepath.Join(checkout, "trocker.yaml")
-			content := "version: 1\ncompose: [compose.yaml]\nshared_write_paths:\n  - " + test.value + "\n"
+			content := fmt.Sprintf("version: 1\ncompose: [compose.yaml]\nshared_write_paths:\n  - %q\n", test.value)
 			if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -464,7 +469,8 @@ func TestLoadRejectsDuplicateSharedWritePaths(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
 	manifestPath := filepath.Join(directory, "trocker.yaml")
-	content := "version: 1\ncompose: [compose.yaml]\nshared_write_paths: [/tmp/a, /tmp/a]\n"
+	path := filepath.Join(t.TempDir(), "a")
+	content := fmt.Sprintf("version: 1\ncompose: [compose.yaml]\nshared_write_paths: [%q, %q]\n", path, path)
 	if err := os.WriteFile(manifestPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

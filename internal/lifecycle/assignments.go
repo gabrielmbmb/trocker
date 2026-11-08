@@ -206,23 +206,25 @@ func chooseStablePort(ctx context.Context, used map[uint16]bool, current, prefer
 }
 
 func portAvailable(ctx context.Context, port uint16) (bool, error) {
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port)))
 	var listen net.ListenConfig
-	listener, err := listen.Listen(ctx, "tcp4", address)
+	listener, err := listen.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
 	if errors.Is(err, addressInUse) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
+	if err := listener.Close(); err != nil {
+		return false, err
+	}
 	wildcard, err := listen.Listen(ctx, "tcp4", net.JoinHostPort("0.0.0.0", strconv.Itoa(int(port))))
 	if errors.Is(err, addressInUse) {
-		return false, listener.Close()
+		return false, nil
 	}
 	if err != nil {
-		return false, errors.Join(err, listener.Close())
+		return false, err
 	}
-	return true, errors.Join(wildcard.Close(), listener.Close())
+	return true, wildcard.Close()
 }
 
 type PortResult struct {
