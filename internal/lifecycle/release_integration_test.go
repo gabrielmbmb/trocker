@@ -201,7 +201,7 @@ func TestInitReleasesOnlyInertDeadWorkspaces(t *testing.T) {
 			}
 			test.remove(t, main, linked)
 
-			if _, err := lifecycle.Init(ctx, main, store, func(lifecycle.InitProposal) (bool, error) { return true, nil }); err != nil {
+			if _, err := lifecycle.Init(ctx, main, store); err != nil {
 				t.Fatal(err)
 			}
 			registry, err := store.Read()

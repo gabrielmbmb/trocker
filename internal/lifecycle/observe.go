@@ -115,7 +115,7 @@ type registrationError struct{ problem string }
 
 func (e *registrationError) Error() string { return e.problem }
 func (e *registrationError) Help() string {
-	return "run trocker init to confirm workspace registration"
+	return "run trocker init to register this workspace"
 }
 
 // Endpoints loads configuration once and resolves addresses solely from current

@@ -304,9 +304,8 @@ func TestNativeGeneratedConfigurationSnapshots(t *testing.T) {
 	if _, err := lifecycle.Plan(t.Context(), main, store, nil); err == nil || !strings.Contains(err.Error(), "template syntax") {
 		t.Fatal("plan missed invalid template", err)
 	}
-	called := false
-	if _, err := lifecycle.Init(t.Context(), main, store, func(lifecycle.InitProposal) (bool, error) { called = true; return true, nil }); err == nil || called {
-		t.Fatal("init did not validate templates before confirmation", err)
+	if _, err := lifecycle.Init(t.Context(), main, store); err == nil || !strings.Contains(err.Error(), "template syntax") {
+		t.Fatal("init missed invalid template", err)
 	}
 	if _, err := os.Stat(filepath.Join(main, "app.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("generated output entered the checkout", err)

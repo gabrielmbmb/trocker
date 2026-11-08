@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
@@ -24,24 +23,17 @@ func arguments(ctx context.Context) []string {
 
 // enterEnvironment runs this command again inside the manifest's environment
 // wrapper. It returns only when no wrapper applies or this process already
-// runs inside it; an unapproved wrapper is refused without running it.
+// runs inside it.
 func enterEnvironment(command *cobra.Command) error {
-	wrapper, err := loadWrapper(command)
+	directory, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	wrapper, err := lifecycle.LoadEnvironmentWrapper(command.Context(), directory)
 	if err != nil || wrapper == nil || wrapper.Active() {
 		return err
 	}
-	if !wrapper.Approved {
-		return &unapprovedWrapperError{command: wrapper.Command}
-	}
 	return execInWrapper(wrapper, arguments(command.Context()))
-}
-
-func loadWrapper(command *cobra.Command) (*lifecycle.EnvironmentWrapper, error) {
-	directory, store, err := queryLocation()
-	if err != nil {
-		return nil, err
-	}
-	return lifecycle.LoadEnvironmentWrapper(command.Context(), directory, store)
 }
 
 // wrappedEnvironment marks the child as started by this wrapper. An inherited
@@ -55,19 +47,7 @@ func wrappedEnvironment(wrapper *lifecycle.EnvironmentWrapper) []string {
 			environment = append(environment, entry)
 		}
 	}
-	return append(environment, prefix+wrapper.Fingerprint)
-}
-
-type unapprovedWrapperError struct{ command []string }
-
-func (e *unapprovedWrapperError) Error() string {
-	return fmt.Sprintf("environment wrapper %s is not approved", strings.Join(e.command, " "))
-}
-
-func (*unapprovedWrapperError) Help() string { return "run trocker init to review and approve it" }
-
-func (*unapprovedWrapperError) Note() string {
-	return "it is new or changed since it was approved, so it has not run"
+	return append(environment, prefix+wrapper.Path)
 }
 
 type wrapperExecError struct {

@@ -8,7 +8,7 @@ description: Start an isolated development environment for the current Git workt
 The project already has Trocker configured. Use its existing `trocker.yaml`; do not recreate configuration or manually assign project names or ports.
 
 1. Confirm you are in the intended Git worktree with `git rev-parse --show-toplevel`, then work from that root. Check that `trocker.yaml` exists. If it is missing, use the `trocker-setup` skill instead.
-2. Run `trocker plan`. If the worktree or selected local Docker target needs registration, run `trocker init`, then retry the plan. Confirmation is the user's decision: let them answer the terminal prompt, or show them `trocker init --dry-run` and use their approved digest with `trocker init --confirm <digest>`. Never pick the digest yourself, pipe confirmation, or edit registration state.
+2. Run `trocker plan`. If the worktree or selected local Docker target needs registration, run `trocker init`, then retry the plan. Never edit registration state yourself.
 3. Once the plan passes, start the environment:
    ```sh
    trocker up --detach
@@ -26,7 +26,6 @@ The project already has Trocker configured. Use its existing `trocker.yaml`; do 
 
 ## Safeguards
 
-- If a command reports that the environment wrapper is not approved, do not approve it yourself. Show the user `trocker init --dry-run` and confirm only the digest they approve.
 - Use Trocker, not direct Compose commands, to manage this stack.
 - Do not modify Compose files, application settings, or `trocker.yaml` to bypass startup errors. Report configuration, ownership, registration, or unsupported-feature blockers.
 - If `up` fails because a stable host port is in use, report it. `trocker ports reassign SERVICE:PORT` moves the assignment once the service is stopped, but it changes an address other tools may rely on, so ask before running it.

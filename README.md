@@ -55,7 +55,7 @@ From your project's checkout, ask:
 
 > Set up Trocker for this project.
 
-Review the configuration and confirm `trocker init` in a terminal when prompted. Initialization registers the workspace without creating Docker resources. Where no terminal is available, `trocker init --dry-run` prints the same proposal with a digest and writes nothing; `trocker init --confirm <digest>` registers only while the proposal still matches, so one reviewed approval can register any number of worktrees that share that configuration.
+Review the configuration the skill proposes. `trocker init` registers the workspace without creating Docker resources and without asking for confirmation; `trocker init --dry-run` shows what it would change and writes nothing.
 
 The setup skill checks configuration without starting containers. Once validation passes, commit `trocker.yaml` so other worktrees can use it.
 
@@ -65,7 +65,7 @@ Open your agent in the intended worktree and ask:
 
 > Start this worktree's environment with Trocker.
 
-The agent uses the existing configuration, checks the plan, and runs `trocker up --detach`. A new worktree needs its own confirmed registration. The agent then checks service state and reports observed endpoint addresses—no manual port assignment required.
+The agent uses the existing configuration, checks the plan, and runs `trocker up --detach`, registering a new worktree with `trocker init` first. The agent then checks service state and reports observed endpoint addresses—no manual port assignment required.
 
 **Use the reported addresses.** Ports can change after a restart unless `stable_ports: true` is enabled. A published endpoint is not, by itself, proof that the application is ready.
 
@@ -175,7 +175,7 @@ Trocker checks Compose and workspace ownership before changing resources. It doe
 
 ### Configure manually
 
-**Skills are recommended, not required.** Run `trocker init` to propose a minimal `trocker.yaml`, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack. Add `--dry-run` and `--confirm <digest>` to register without a terminal.
+**Skills are recommended, not required.** Run `trocker init` to propose a minimal `trocker.yaml`, or validate an existing one without rewriting it. Add endpoints and bindings explicitly, then run `trocker doctor` and `trocker plan` before starting the stack. Add `--dry-run` to see what `init` would change without writing anything.
 
 Keep service definitions in Compose:
 
@@ -236,7 +236,7 @@ export DD_AGENT_VERSION="$(cat datadog-agent.version)"
 exec doppler run -- "$@"
 ```
 
-Commands that load Compose (`init`, `plan`, `doctor`, `up`, `run`, `status`, `endpoints`) run again inside the wrapper, which receives the Trocker command as its arguments and must run it with the environment it adds. The wrapper is repository code, so it runs only after `init` approves it: its fingerprint, the declared command plus the script's content, is part of the init digest, and one approval covers every worktree with the same wrapper. Editing the script withdraws the approval until `init` approves the new version; files the script reads are not covered. Before approval, `init` cannot load Compose, so it validates Compose inside the wrapper after you confirm. Not supported on Windows.
+Commands that load Compose (`init`, `plan`, `doctor`, `up`, `run`, `status`, `endpoints`) run again inside the wrapper, which receives the Trocker command as its arguments and must run it with the environment it adds. The wrapper is repository code and runs without a prompt, like the repository's other scripts, so run Trocker only in checkouts you trust. It must pass on the environment it receives: Trocker recognizes the wrapped run through a variable it adds, and a wrapper that drops it starts Trocker, and itself, again. Not supported on Windows.
 
 ### Generate configuration files
 

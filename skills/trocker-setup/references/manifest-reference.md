@@ -95,8 +95,7 @@ exec doppler run -- "$@"
 - The first element is an executable script inside the manifest directory, declared relative to it. Further elements are passed to it.
 - The script receives the Trocker executable and its arguments, must run them with the environment it adds, and must preserve the environment it was given.
 - `init`, `plan`, `doctor`, `up`, `run`, `status`, and `endpoints` run inside it. Commands on existing resources do not.
-- It runs only once `init` approves it. Its fingerprint, the declared command plus the script content, is part of the init digest, and one approval covers every worktree with the same wrapper. Editing the script withdraws the approval; files it reads are not covered, so keep the logic in the script.
-- Before approval, `init --dry-run` proposes without loading Compose, and the confirmed init validates Compose inside the wrapper.
+- It runs without a prompt, with the same trust as the repository's other scripts. A script that drops its environment also drops the variable that tells Trocker it already runs inside the wrapper, and starts Trocker again indefinitely.
 - Not supported on Windows.
 
 ### `stable_ports`
@@ -392,7 +391,7 @@ trocker plan       # read-only preview using the same checks
 - `init` also resolves the Docker target and registers the workspace. It creates no containers.
 - `plan` and `doctor` require a registered workspace and a reachable target. They do not allocate ports, create resources, or rewrite metadata.
 - `plan` and `doctor` run the stricter isolation/unsupported-feature checks; use them before declaring the setup complete.
-- If the workspace is unregistered, or the selected Docker target is not associated, run `init` and confirm. If the workspace moved ambiguously, its marker is missing, its association is ambiguous, or ownership conflicts, stop and follow the diagnostic. Do not delete the registry or workspace marker.
+- If the workspace is unregistered, or the selected Docker target is not associated, run `init`. If the workspace moved ambiguously, its marker is missing, its association is ambiguous, or ownership conflicts, stop and follow the diagnostic. Do not delete the registry or workspace marker.
 - If validation fails on a manifest field, fix `trocker.yaml`. If it fails on an unsupported Compose feature or foreign resource, report the blocker.
 
 Errors identify fields and safe categories. Do not paste raw SDK errors, resolved Compose environments, or rejected secret-bearing values into your report.

@@ -16,10 +16,10 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §1 `build.additional_contexts` | Declared per manifest in `build_contexts`; only in-checkout paths, and `service:`/remote contexts stay rejected. |
 | §1.1 writable paths outside the checkout | Declared per manifest in `shared_write_paths` with `~/` expansion; never created by Docker, never owned or removed by Trocker. |
 | §3.2, §3.3, §3.8 workspace removal | Registration now tracks the worktree, not the stack. `trocker release [WORKSPACE] [--volumes]` stops what a workspace still owns from any directory and then deletes its registration; `init` sweeps registrations whose worktree Git no longer records and which own nothing; `ls --all` reports the rest as `missing`. |
-| §3.1 non-interactive registration | `init --dry-run` reports a digest and writes nothing; `init --confirm <digest>` registers only while the proposal still matches. The digest covers the effective manifest, the Docker target, creation, and relocation, and excludes the checkout path and identity, so one approval covers every worktree with that configuration. |
+| §3.1 non-interactive registration | `init` registers without a prompt or a terminal; `init --dry-run` reports the same changes and writes nothing. |
 | §3.4 no `logs` | `trocker logs [SERVICE...]` streams owned container logs without locks; `--follow`, `--tail`, `--since`, `--until`, and `--timestamps` map to the Compose log options. |
 | §3.5 no `exec`/`ps` | `trocker ps [--all] [--json]` reports the Compose project and container names, services, states, and health; `trocker exec SERVICE COMMAND...` addresses containers by service name and preserves the child exit status. |
-| §3.7 interpolation inputs need an external wrapper | `environment_wrapper` in `trocker.yaml` runs Compose-loading commands inside a repository script, such as `doppler run`. It runs only after `init` approves its fingerprint, which covers the command and the script's content. Seeding per-worktree files remains open. |
+| §3.7 interpolation inputs need an external wrapper | `environment_wrapper` in `trocker.yaml` runs Compose-loading commands inside a repository script, such as `doppler run`, without a prompt. Seeding per-worktree files remains open. |
 | §3.6 profiles are environment-only | `profiles:` in `trocker.yaml` selects Compose profiles explicitly; `--profile` overrides it on `plan`, `doctor`, `up`, `run`, `status`, and `endpoints`; `COMPOSE_PROFILES` remains the fallback. `plan`/`doctor` report active profiles and service count. |
 | §2.1–§2.3 declarable stable host ports | `stable_ports: true` assigns and persists one host port per workspace publication. Existing observed, remembered, or Compose-resolved values seed the first assignment, and the rest come from `stable_port_range` (default 20000-32767), never the OS ephemeral range; later startups claim the exact port and fail on conflict instead of falling back, and `trocker ports reassign` moves an assignment while its service is stopped. `trocker ports --json` exposes the mapping before startup, and `plan` shows assigned values without claiming them. |
 
@@ -111,7 +111,7 @@ The adopter's worktree lifecycle is agent-driven: an agent creates a worktree pe
 
 ### 3.1 Registration required a terminal, per worktree
 
-Resolved: `init --dry-run` and `init --confirm <digest>` register without a terminal. The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked; it excludes the checkout path and the workspace identity, so one approval covers every worktree that shares the configuration, while editing the manifest or switching daemons requires a new approval. Approving is still the user's decision: an agent may pass a digest the user approved, never choose one itself.
+Resolved: `init` registers without asking for confirmation, so an agent can register each worktree it creates. Everything `init` decides is local metadata that `release` undoes, and a copied or ambiguous checkout still fails. `init --dry-run` reports the same changes and writes nothing.
 
 ### 3.2 No way to unregister a workspace
 
@@ -180,7 +180,7 @@ Ordered by services unblocked per unit of design risk, not by implementation cos
 | ~~1~~ | ~~Sharing policy for writable bind mounts (§1.1)~~ | Resolved: `read_write_paths` | |
 | ~~2~~ | ~~Socket-mount opt-in with a dedicated error (§1.2)~~ | Resolved: `docker_socket_services` | |
 | ~~3~~ | ~~`unregister`/`forget` + sweep (§3.2, §3.3)~~ | Resolved: `trocker release` + `init` sweep | |
-| ~~4~~ | ~~Digest-based non-interactive `init` (§3.1)~~ | Resolved: `init --dry-run` + `init --confirm <digest>` | |
+| ~~4~~ | ~~Non-interactive `init` (§3.1)~~ | Resolved: `init` registers without confirmation | |
 | ~~5~~ | ~~Declarable host port (§2.1–§2.3)~~ | Resolved: `stable_ports` + `trocker ports` | One owner per port; fail, never fall back |
 | ~~6~~ | ~~`ps --json` / `logs` / `exec` (§3.4, §3.5)~~ | Resolved: test and debugging recipes address services, not container names | No allocation or workspace mutation locks |
 | 7 | Deny-list completeness test (§4) | Confidence in the isolation claim | None — it is a test |

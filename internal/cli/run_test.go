@@ -158,18 +158,6 @@ func TestOutputFailureIsNotReportedAsSuccessOrUsageError(t *testing.T) {
 	}
 }
 
-func TestInitRequiresInteractiveConfirmation(t *testing.T) {
-	t.Parallel()
-	var output bytes.Buffer
-	err := cli.Run([]string{"init"}, "dev", &output)
-	if err == nil || !strings.Contains(err.Error(), "interactive terminal") || errors.Is(err, cli.ErrUsage) {
-		t.Fatalf("unexpected init error: %v", err)
-	}
-	if output.Len() != 0 {
-		t.Fatal("noninteractive init reported success")
-	}
-}
-
 func TestShortOutputWriteIsReportedAsFailure(t *testing.T) {
 	t.Parallel()
 

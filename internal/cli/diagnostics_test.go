@@ -29,7 +29,7 @@ func TestMissingComposeDiagnostic(t *testing.T) {
 	}
 	want := "error: no Compose file found\n\n" +
 		"  help: add compose.yaml to your checkout, then run trocker init\n" +
-		"  note: trocker init can generate trocker.yaml after confirmation\n"
+		"  note: trocker init can generate trocker.yaml\n"
 	if output.String() != want {
 		t.Fatalf("diagnostic:\n%s\nwant:\n%s", &output, want)
 	}

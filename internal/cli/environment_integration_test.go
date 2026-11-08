@@ -27,11 +27,11 @@ const (
 	wrapperScript   = "#!/bin/sh\necho ran >> \"$WRAPPER_LOG\"\nexport FROM_WRAPPER=yes\nexec \"$@\"\n"
 )
 
-// The wrapper is repository code that Trocker runs before Compose loads, so it
-// must never run before init approves it, and an edit withdraws the approval.
-// Compose here fails to load without the wrapper's variable, so a successful
-// plan proves the environment reached it.
-func TestEnvironmentWrapperRunsOnlyOnceApproved(t *testing.T) {
+// Compose here fails to load without the wrapper's variable, so each command
+// that succeeds proves the environment reached it. Commands run without a
+// terminal, as an agent runs them, and the count shows the wrapper ran exactly
+// once per command rather than looping or being skipped.
+func TestEnvironmentWrapperProvidesComposeEnvironment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 	binary := buildTrocker(t, ctx)
@@ -65,29 +65,17 @@ func TestEnvironmentWrapperRunsOnlyOnceApproved(t *testing.T) {
 		return strings.Count(string(content), "ran\n")
 	}
 
-	if _, stderr, err := trocker("plan"); err == nil || !strings.Contains(stderr, "is not approved") || wrapperRuns() != 0 {
-		t.Fatalf("unapproved plan: %v, runs %d\n%s", err, wrapperRuns(), stderr)
+	if stdout, stderr, err := trocker("init", "--dry-run"); err != nil || wrapperRuns() != 1 || !strings.Contains(stdout, "Wrapper    env.sh") {
+		t.Fatalf("dry run: %v, runs %d\n%s%s", err, wrapperRuns(), stdout, stderr)
 	}
-	digest, stderr, err := trocker("init", "--dry-run")
-	if err != nil || wrapperRuns() != 0 || !strings.Contains(stderr, "Wrapper    env.sh") {
-		t.Fatalf("dry run: %v, runs %d\n%s", err, wrapperRuns(), stderr)
+	if _, stderr, err := trocker("plan"); err == nil || !strings.Contains(stderr, "not registered") {
+		t.Fatalf("a dry run must not register the workspace: %v\n%s", err, stderr)
 	}
-	if _, stderr, err := trocker("init", "--confirm", strings.TrimSpace(digest)); err != nil || wrapperRuns() != 1 {
-		t.Fatalf("confirmed init: %v, runs %d\n%s", err, wrapperRuns(), stderr)
+	if _, stderr, err := trocker("init"); err != nil || wrapperRuns() != 3 {
+		t.Fatalf("init: %v, runs %d\n%s", err, wrapperRuns(), stderr)
 	}
-	if _, stderr, err := trocker("plan"); err != nil || wrapperRuns() != 2 {
-		t.Fatalf("approved plan: %v, runs %d\n%s", err, wrapperRuns(), stderr)
-	}
-
-	script := filepath.Join(checkout, "env.sh")
-	if err := os.WriteFile(script, []byte(wrapperScript+"# edited\n"), 0o700); err != nil { //nolint:gosec // The wrapper must be executable.
-		t.Fatal(err)
-	}
-	if _, stderr, err := trocker("plan"); err == nil || !strings.Contains(stderr, "is not approved") || wrapperRuns() != 2 {
-		t.Fatalf("plan after an edit: %v, runs %d\n%s", err, wrapperRuns(), stderr)
-	}
-	if edited, _, err := trocker("init", "--dry-run"); err != nil || edited == digest {
-		t.Fatalf("an edited wrapper must need a new digest: %v", err)
+	if _, stderr, err := trocker("plan"); err != nil || wrapperRuns() != 4 {
+		t.Fatalf("plan: %v, runs %d\n%s", err, wrapperRuns(), stderr)
 	}
 }
 

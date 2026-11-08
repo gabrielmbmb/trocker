@@ -2,17 +2,12 @@
 package lifecycle
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 	"go.yaml.in/yaml/v4"
@@ -24,6 +19,7 @@ import (
 	"github.com/gabrielmbmb/trocker/internal/workspace"
 )
 
+// InitProposal describes what init changes for a checkout.
 type InitProposal struct {
 	Checkout   workspace.Checkout
 	TargetID   string
@@ -33,153 +29,81 @@ type InitProposal struct {
 	NewTarget  bool
 	// Manifest is populated only for a newly proposed, secret-free manifest.
 	Manifest []byte
-	// Digest identifies the decisions this proposal asks the user to approve.
-	Digest string
-	// EnvironmentWrapper is the declared environment_wrapper command, which
-	// WrapperFingerprint identifies together with the script's content.
+	// EnvironmentWrapper is the declared environment_wrapper command.
 	EnvironmentWrapper []string
-	WrapperFingerprint string
-	WrapperApproved    bool
-	// ComposeDeferred means an unapproved wrapper has not run, so Compose is
-	// validated only after confirmation, by init running inside the wrapper.
-	ComposeDeferred bool
 }
 
-var ErrDeclined = errors.New("initialization not confirmed; nothing written")
-
-// initDigestVersion invalidates digests captured against an older proposal shape.
-const initDigestVersion = "trocker-init-1"
-
-// digest covers what a registration approval actually decides: the effective
-// manifest, the environment wrapper that may run, the Docker target, and
-// whether a moved checkout is relinked. The
-// checkout path and the workspace identity are deliberately excluded, so an
-// approval of a configuration applies to every worktree that uses it. Editing
-// the manifest or switching daemons changes the digest and needs a new approval.
-func (p InitProposal) digest(manifest []byte, creating bool) string {
-	var canonical strings.Builder
-	write := func(value string) {
-		canonical.WriteString(strconv.Itoa(len(value)))
-		canonical.WriteByte(':')
-		canonical.WriteString(value)
-	}
-	write(initDigestVersion)
-	if creating {
-		write("create")
-	} else {
-		write("keep")
-	}
-	write(string(manifest))
-	write(p.TargetID)
-	write(p.TargetHost)
-	if p.Moved {
-		write("moved")
-	}
-	if p.WrapperFingerprint != "" {
-		write("wrapper")
-		write(p.WrapperFingerprint)
-	}
-	sum := sha256.Sum256([]byte(canonical.String()))
-	return hex.EncodeToString(sum[:])
-}
-
-// PrepareInit returns the proposal that init would confirm, without writing
-// configuration or registration state.
-func PrepareInit(ctx context.Context, directory string, store state.Store) (InitProposal, error) {
-	prepared, err := prepareInit(ctx, directory, store)
-	if err != nil {
-		return InitProposal{}, err
-	}
-	return prepared.proposal, nil
-}
-
-// Init validates and presents the proposal before creating any local state.
-// It never creates or adopts Docker resources.
-func Init(ctx context.Context, directory string, store state.Store, confirm func(InitProposal) (bool, error)) (workspace.Registration, error) {
-	prepared, err := prepareInit(ctx, directory, store)
-	if err != nil {
-		return workspace.Registration{}, err
-	}
-	accepted, err := confirm(prepared.proposal)
-	if err != nil {
-		return workspace.Registration{}, err
-	}
-	if !accepted {
-		return workspace.Registration{}, ErrDeclined
-	}
-	if prepared.proposal.ComposeDeferred {
-		return workspace.Registration{}, &deferredComposeError{command: prepared.proposal.EnvironmentWrapper}
-	}
-	return applyInit(ctx, store, prepared)
-}
-
-type preparedInit struct {
-	proposal         InitProposal
-	originalManifest []byte
-}
-
-func prepareInit(ctx context.Context, directory string, store state.Store) (prepared preparedInit, err error) {
+// PrepareInit returns what init would change, without writing configuration or
+// registration state.
+func PrepareInit(ctx context.Context, directory string, store state.Store) (proposal InitProposal, err error) {
 	checkout, err := workspace.Discover(ctx, directory)
 	if err != nil {
-		return prepared, err
+		return proposal, err
 	}
-	original, proposed, wrapper, err := prepareInitManifest(ctx, checkout.Root)
+	proposed, wrapper, err := prepareInitManifest(ctx, checkout.Root)
 	if err != nil {
-		return prepared, err
+		return proposal, err
 	}
 	registry, err := store.Read()
 	if err != nil {
-		return prepared, err
+		return proposal, err
 	}
 	index, moved, err := workspace.Find(ctx, checkout, registry.Workspaces)
 	if err != nil {
-		return prepared, err
+		return proposal, err
 	}
 	target, err := compose.ResolveTarget(ctx)
 	if err != nil {
-		return prepared, err
+		return proposal, err
 	}
 	defer func() { err = errors.Join(err, target.Close()) }()
 
-	effective, creating := original, false
-	if len(proposed) > 0 {
-		effective, creating = proposed, true
-	}
-	proposal := InitProposal{
+	proposal = InitProposal{
 		Checkout: checkout, TargetID: target.ID, TargetHost: target.Host,
-		Moved: moved, NewTarget: true, Manifest: proposed,
+		Moved: moved, NewTarget: true, Manifest: proposed, EnvironmentWrapper: wrapper,
 	}
-	if wrapper != nil {
-		proposal.EnvironmentWrapper = wrapper.Command
-		proposal.WrapperFingerprint = wrapper.Fingerprint
-		proposal.WrapperApproved = registry.WrapperApproved(wrapper.Fingerprint)
-		proposal.ComposeDeferred = !wrapper.Active()
-	}
-	proposal.Digest = proposal.digest(effective, creating)
 	if index >= 0 {
 		existing := registry.Workspaces[index]
 		proposal.ExistingID = existing.ID
 		proposal.NewTarget = !slices.Contains(existing.Targets, target.ID)
 	}
-	return preparedInit{proposal: proposal, originalManifest: original}, nil
+	return proposal, nil
 }
 
-// A non-nil proposal means the manifest was absent. Existing configuration is
-// validated and retained verbatim for the post-confirmation comparison.
-func prepareInitManifest(ctx context.Context, root string) (original, proposed []byte, wrapper *EnvironmentWrapper, err error) {
+// Init validates the checkout's configuration and registers it. It never
+// creates or adopts Docker resources, and invalid configuration leaves no state.
+func Init(ctx context.Context, directory string, store state.Store) (registration workspace.Registration, err error) {
+	proposal, err := PrepareInit(ctx, directory, store)
+	if err != nil {
+		return registration, err
+	}
+	lock, err := store.LockWorkspace(ctx, proposal.Checkout.GitDir)
+	if err != nil {
+		return registration, err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	return applyInit(ctx, store, proposal)
+}
+
+// A non-nil proposal means the manifest was absent. An existing manifest is
+// validated and kept unchanged.
+func prepareInitManifest(ctx context.Context, root string) (proposed []byte, wrapper []string, err error) {
 	path := filepath.Join(root, "trocker.yaml")
-	original, err = os.ReadFile(path) //nolint:gosec // Manifest path is within the discovered checkout.
+	_, err = os.Stat(path)
 	if err == nil {
-		wrapper, err = validateInitManifest(ctx, path)
-		return original, nil, wrapper, err
+		manifest, err := validateInitManifest(ctx, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, manifest.EnvironmentWrapper, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	project, err := compose.DiscoverFiles(ctx, root)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	manifest := config.Manifest{Version: 1}
 	for _, file := range project.ComposeFiles {
@@ -190,53 +114,38 @@ func prepareInitManifest(ctx context.Context, root string) (original, proposed [
 		manifest.Compose = append(manifest.Compose, relative)
 	}
 	if err := manifest.Validate(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	proposed, err = yaml.Dump(manifest)
-	return nil, proposed, nil, err
+	return proposed, nil, err
 }
 
-// validateInitManifest checks an existing manifest. Compose interpolation may
-// need the environment wrapper's output, and an unapproved wrapper must not
-// run, so Compose is loaded only without a wrapper or inside it.
-func validateInitManifest(ctx context.Context, path string) (*EnvironmentWrapper, error) {
+// validateInitManifest checks an existing manifest. Compose interpolates with
+// this process's environment, so a declared environment wrapper must already
+// be running, as the CLI arranges before init.
+func validateInitManifest(ctx context.Context, path string) (*config.Manifest, error) {
 	manifest, err := config.Load(path)
 	if err != nil {
 		return nil, err
 	}
-	wrapper, err := resolveEnvironmentWrapper(manifest)
-	if err != nil {
+	if _, _, err := compose.Load(ctx, path, nil); err != nil {
 		return nil, err
-	}
-	if wrapper == nil || wrapper.Active() {
-		if _, _, err := compose.Load(ctx, path, nil); err != nil {
-			return nil, err
-		}
 	}
 	if err := checkStablePortRange(manifest, ephemeralPortRange()); err != nil {
 		return nil, err
 	}
 	_, err = generated.Validate(ctx, manifest)
-	return wrapper, err
+	return manifest, err
 }
 
-func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (registration workspace.Registration, err error) {
+// applyInit writes the proposed manifest and the registration. The caller holds
+// the workspace lock; registerLocked takes the registry lock last and looks the
+// checkout up again under it, so a registration made since the proposal is
+// reused rather than duplicated.
+func applyInit(ctx context.Context, store state.Store, proposal InitProposal) (registration workspace.Registration, err error) {
 	if err := ctx.Err(); err != nil {
 		return registration, err
 	}
-	proposal := prepared.proposal
-	lock, err := store.LockWorkspace(ctx, proposal.Checkout.GitDir)
-	if err != nil {
-		return registration, err
-	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
-
-	if err := revalidateInit(ctx, store, proposal); err != nil {
-		return registration, err
-	}
-	// Sweeping other workspaces is maintenance of provably inert registrations,
-	// which the confirmation does not describe, so it happens only after consent
-	// and never on a declined init.
 	target, err := compose.ResolveTarget(ctx)
 	if err != nil {
 		return registration, err
@@ -245,14 +154,14 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 	if err := reapDeadWorkspaces(ctx, store, target); err != nil {
 		return registration, err
 	}
-	if err := applyInitManifest(prepared); err != nil {
-		return registration, err
+	path := filepath.Join(proposal.Checkout.Root, "trocker.yaml")
+	if proposal.Manifest != nil {
+		if err := createFile(path, proposal.Manifest); err != nil {
+			return registration, err
+		}
 	}
-	manifest, err := config.Load(filepath.Join(proposal.Checkout.Root, "trocker.yaml"))
+	manifest, err := config.Load(path)
 	if err != nil {
-		return registration, err
-	}
-	if err := approveInitWrapper(ctx, store, manifest, proposal.WrapperFingerprint); err != nil {
 		return registration, err
 	}
 	registration, err = registerLocked(ctx, store, proposal.Checkout, proposal.TargetID)
@@ -274,59 +183,8 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 	return registration, nil
 }
 
-// approveInitWrapper records the confirmed wrapper, after checking that the
-// script did not change since the proposal it was confirmed with.
-func approveInitWrapper(ctx context.Context, store state.Store, manifest *config.Manifest, approved string) error {
-	wrapper, err := resolveEnvironmentWrapper(manifest)
-	if err != nil || wrapper == nil {
-		return err
-	}
-	if wrapper.Fingerprint != approved {
-		return fmt.Errorf("environment wrapper changed during confirmation; retry init")
-	}
-	return store.ApproveWrapper(ctx, wrapper.Fingerprint)
-}
-
-// Recheck under the workspace lock before any manifest/registry writes. Prompts
-// and Docker calls happen before locking; registerLocked takes the registry lock last.
-func revalidateInit(ctx context.Context, store state.Store, proposal InitProposal) error {
-	current, err := workspace.Discover(ctx, proposal.Checkout.Root)
-	if err != nil {
-		return err
-	}
-	if current != proposal.Checkout {
-		return fmt.Errorf("checkout changed during confirmation; retry init")
-	}
-	registry, err := store.Read()
-	if err != nil {
-		return err
-	}
-	index, _, err := workspace.Find(ctx, current, registry.Workspaces)
-	if err != nil {
-		return err
-	}
-	if proposal.ExistingID != "" && (index < 0 || registry.Workspaces[index].ID != proposal.ExistingID) {
-		return fmt.Errorf("registration changed during confirmation; explicit recovery required")
-	}
-	return nil
-}
-
-func applyInitManifest(prepared preparedInit) error {
-	path := filepath.Join(prepared.proposal.Checkout.Root, "trocker.yaml")
-	if prepared.proposal.Manifest != nil {
-		return createFile(path, prepared.proposal.Manifest)
-	}
-	latest, err := os.ReadFile(path) //nolint:gosec // Recheck the same selected manifest after confirmation.
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(prepared.originalManifest, latest) {
-		return fmt.Errorf("manifest changed during confirmation; retry init")
-	}
-	return nil
-}
-
-// Register persists an explicitly approved association under workspace and registry locks.
+// Register persists a checkout's association with a target under workspace and
+// registry locks.
 func Register(ctx context.Context, store state.Store, checkout workspace.Checkout, targetID string) (registration workspace.Registration, err error) {
 	lock, err := store.LockWorkspace(ctx, checkout.GitDir)
 	if err != nil {

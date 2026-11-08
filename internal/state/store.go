@@ -27,10 +27,6 @@ type Registry struct {
 	Workspaces  []workspace.Registration `json:"workspaces"`
 	Ports       []PortPreference         `json:"port_preferences,omitempty"`
 	Assignments []PortAssignment         `json:"port_assignments,omitempty"`
-	// ApprovedWrappers holds the fingerprints of environment wrappers a user
-	// approved through init. They are not tied to a workspace, so an approval
-	// covers every worktree whose wrapper has the same fingerprint.
-	ApprovedWrappers []string `json:"approved_environment_wrappers,omitempty"`
 }
 
 type Store struct{ Directory string }

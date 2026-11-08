@@ -306,7 +306,7 @@ func TestConcurrentAllocatedStartupAcrossProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	second, err := lifecycle.Init(ctx, other, store, func(lifecycle.InitProposal) (bool, error) { return true, nil })
+	second, err := lifecycle.Init(ctx, other, store)
 	if err != nil {
 		t.Fatal(err)
 	}

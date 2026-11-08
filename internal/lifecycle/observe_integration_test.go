@@ -53,7 +53,7 @@ func TestReadOnlyObservations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	registration, err := lifecycle.Init(ctx, main, store, func(lifecycle.InitProposal) (bool, error) { return true, nil })
+	registration, err := lifecycle.Init(ctx, main, store)
 	if err != nil {
 		t.Fatal(err)
 	}

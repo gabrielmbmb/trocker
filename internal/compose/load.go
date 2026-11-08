@@ -221,7 +221,7 @@ func (e *loadError) Help() string {
 
 func (e *loadError) Note() string {
 	if errors.Is(e.cause, errdefs.ErrNotFound) {
-		return "trocker init can generate trocker.yaml after confirmation"
+		return "trocker init can generate trocker.yaml"
 	}
 	return ""
 }
