@@ -258,6 +258,12 @@ func runPlan(command *cobra.Command, _ []string) error {
 		if result.AssignedPorts > 0 {
 			fmt.Fprintf(&message, "\n%d stable host ports are assigned; up claims them exactly.\n", result.AssignedPorts)
 		}
+		if len(result.EphemeralPorts) > 0 {
+			fmt.Fprintf(&message, "\n%d stable host ports are in the range the OS gives programs listening on port zero; run trocker ports reassign to move them.\n", len(result.EphemeralPorts))
+		}
+		for _, port := range result.BusyPorts {
+			fmt.Fprintf(&message, "\nStable host port %d for %s:%d is in use by another program; up fails until it exits, or run trocker ports reassign %s:%d.\n", port.HostPort, port.Service, port.ContainerPort, port.Service, port.ContainerPort)
+		}
 		if pending := result.Publications - result.AssignedPorts; pending > 0 {
 			fmt.Fprintf(&message, "\n%d stable host ports are pending; run trocker init or trocker up.\n", pending)
 		}

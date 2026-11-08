@@ -6,7 +6,26 @@ import (
 	"testing"
 
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
+	"github.com/gabrielmbmb/trocker/internal/plan"
 )
+
+func TestParsePublication(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  plan.PortKey
+		ok    bool
+	}{
+		{value: "kennedy-api:8000", want: plan.PortKey{Service: "kennedy-api", Port: 8000}, ok: true},
+		{value: "kennedy-api"},
+		{value: ":8000"},
+		{value: "kennedy-api:0"},
+		{value: "kennedy-api:65536"},
+	} {
+		if got, ok := parsePublication(test.value); got != test.want || ok != test.ok {
+			t.Errorf("parsePublication(%q) = %v, %v; want %v, %v", test.value, got, ok, test.want, test.ok)
+		}
+	}
+}
 
 func TestWritePorts(t *testing.T) {
 	var output bytes.Buffer

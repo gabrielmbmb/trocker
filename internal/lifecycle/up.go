@@ -27,6 +27,8 @@ type PlanResult struct {
 	StablePorts    bool
 	Publications   int
 	AssignedPorts  int
+	EphemeralPorts []PortEntry
+	BusyPorts      []PortEntry
 	NativeFiles    int
 	ContainerFiles int
 }
@@ -97,8 +99,12 @@ func Plan(ctx context.Context, directory string, store state.Store, profiles []s
 	if err != nil {
 		return PlanResult{}, err
 	}
-	result, err = applyAssignments(result, assignmentMap(registry, result.Registration.ID, target.ID))
+	assignments := assignmentMap(registry, result.Registration.ID, target.ID)
+	result, err = applyAssignments(result, assignments)
 	if err != nil {
+		return PlanResult{}, err
+	}
+	if err := result.checkAssignments(ctx, target, assignments); err != nil {
 		return PlanResult{}, err
 	}
 	if err := target.CheckOwnership(ctx, result.Project, result.Registration); err != nil {
@@ -118,6 +124,22 @@ func applyAssignments(result PlanResult, assignments map[plan.PortKey]uint16) (P
 	result.Project = project
 	_, result.AssignedPorts = publicationCounts(result.manifest, project, assignments)
 	return result, nil
+}
+
+// checkAssignments reports selected stable assignments that would make up fail
+// or that other programs could take, without claiming any port.
+func (r *PlanResult) checkAssignments(ctx context.Context, target *compose.Target, assignments map[plan.PortKey]uint16) error {
+	if !r.StablePorts {
+		return nil
+	}
+	keys := slices.DeleteFunc(plan.Publications(r.manifest, r.Project), func(key plan.PortKey) bool { return assignments[key] == 0 })
+	published, err := observedPorts(ctx, target, r.Registration, keys)
+	if err != nil {
+		return err
+	}
+	available := func(port uint16) (bool, error) { return portAvailable(ctx, port) }
+	r.EphemeralPorts, r.BusyPorts, err = classifyAssignments(keys, assignments, published, ephemeralPortRange(), available)
+	return err
 }
 
 func publicationCounts(manifest *config.Manifest, project *types.Project, ports map[plan.PortKey]uint16) (publications, assigned int) {

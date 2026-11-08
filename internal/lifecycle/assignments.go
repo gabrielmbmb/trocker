@@ -108,6 +108,30 @@ func assignMissingStablePorts(ctx context.Context, store state.Store, prepared P
 	return mapping, nil
 }
 
+// classifyAssignments finds assignments inside the ephemeral range and those
+// another program holds now. A port this workspace's container publishes is
+// held by the workspace itself, not by another program.
+func classifyAssignments(keys []plan.PortKey, assigned, published map[plan.PortKey]uint16, ephemeral config.PortRange, available func(uint16) (bool, error)) (inEphemeral, busy []PortEntry, err error) {
+	for _, key := range keys {
+		port := assigned[key]
+		entry := PortEntry{Service: key.Service, ContainerPort: key.Port, HostPort: port}
+		if ephemeral.Contains(port) {
+			inEphemeral = append(inEphemeral, entry)
+		}
+		if published[key] == port {
+			continue
+		}
+		free, err := available(port)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !free {
+			busy = append(busy, entry)
+		}
+	}
+	return inEphemeral, busy, nil
+}
+
 // stableSeed lists the ports a new assignment tries before the stable range:
 // the port its running container already publishes, a remembered preference,
 // and the host port Compose declares.

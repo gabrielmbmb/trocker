@@ -10,6 +10,30 @@ import (
 	"github.com/gabrielmbmb/trocker/internal/state"
 )
 
+func TestClassifyAssignments(t *testing.T) {
+	t.Parallel()
+	ephemeral := config.PortRange{First: 49152, Last: 65535}
+	inRange := plan.PortKey{Service: "api", Port: 8000}
+	takenByOther := plan.PortKey{Service: "db", Port: 5432}
+	ownPublication := plan.PortKey{Service: "web", Port: 3000}
+	free := plan.PortKey{Service: "worker", Port: 9000}
+	assigned := map[plan.PortKey]uint16{inRange: 50000, takenByOther: 21000, ownPublication: 21001, free: 21002}
+	published := map[plan.PortKey]uint16{ownPublication: 21001}
+	busy := map[uint16]bool{21000: true, 21001: true}
+	available := func(port uint16) (bool, error) { return !busy[port], nil }
+
+	inEphemeral, taken, err := classifyAssignments([]plan.PortKey{inRange, takenByOther, ownPublication, free}, assigned, published, ephemeral, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []PortEntry{{Service: "api", ContainerPort: 8000, HostPort: 50000}}; !slices.Equal(inEphemeral, want) {
+		t.Errorf("ephemeral assignments = %v, want %v", inEphemeral, want)
+	}
+	if want := []PortEntry{{Service: "db", ContainerPort: 5432, HostPort: 21000}}; !slices.Equal(taken, want) {
+		t.Errorf("busy assignments = %v, want %v", taken, want)
+	}
+}
+
 func TestSeedPort(t *testing.T) {
 	t.Parallel()
 	ephemeral := config.PortRange{First: 49152, Last: 65535}
