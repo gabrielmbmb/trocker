@@ -53,12 +53,20 @@ func TestLifecyclePreservesIdentityAndVolumeData(t *testing.T) {
 	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Stop, Services: []string{"api"}}, &progress); err != nil {
 		t.Fatal(err)
 	}
-	stopped, err := target.Containers(ctx, registration, api.PsOptions{All: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stopped) != 1 || stopped[0].ID != original.ID || stopped[0].State != container.StateExited {
-		t.Fatalf("stop removed or failed to stop container %s: observed %+v; progress: %s", original.ID, stopped, &progress)
+	deadline := time.Now().Add(10 * time.Second)
+	var stopped []api.ContainerSummary
+	for {
+		stopped, err = target.Containers(ctx, registration, api.PsOptions{All: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(stopped) == 1 && stopped[0].ID == original.ID && stopped[0].State == container.StateExited {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stop removed or failed to stop container %s: observed %+v; progress: %s", original.ID, stopped, &progress)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	// Existing-resource commands must not depend on a valid current Compose file.
 	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte("invalid: ["), 0o600); err != nil {
