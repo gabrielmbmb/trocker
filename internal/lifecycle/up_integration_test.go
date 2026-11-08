@@ -177,6 +177,64 @@ func TestUpBuildAndServiceSelection(t *testing.T) {
 	}
 }
 
+// Workspace build tags exist only on this daemon, so up must build a missing
+// image itself instead of pulling, reuse it afterwards, and rebuild on request.
+func TestUpBuildsMissingImagesAndRebuildsOnRequest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	main, store, registration, target := upWorkspace(t, ctx)
+	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte(strings.Replace(upCompose, "    image: busybox:1.37", "    build: .", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeContext := func(marker string) {
+		t.Helper()
+		for name, content := range map[string]string{"Dockerfile": "FROM busybox:1.37\nCOPY marker /marker\n", "marker": marker} {
+			if err := os.WriteFile(filepath.Join(main, name), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	imageID := func() string {
+		t.Helper()
+		image, err := target.Client.ImageInspect(ctx, registration.ProjectName()+"-api:latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return image.ID
+	}
+	writeContext("one")
+
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true, NoBuild: true}, io.Discard); err == nil || !strings.Contains(err.Error(), "no image built") {
+		t.Fatalf("--no-build with a missing image = %v", err)
+	}
+	if containers, err := target.Containers(ctx, registration, api.PsOptions{All: true}); err != nil || len(containers) != 0 {
+		t.Fatalf("--no-build created containers: %v, %v", containers, err)
+	}
+
+	var progress bytes.Buffer
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, &progress); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(progress.String(), "Pulling") {
+		t.Fatalf("up tried to pull the workspace build tag:\n%s", progress.String())
+	}
+	built := imageID()
+
+	writeContext("two")
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if imageID() != built {
+		t.Fatal("up rebuilt an existing image without --build")
+	}
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true, Build: true}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if imageID() == built {
+		t.Fatal("up --build reused the image built from the old context")
+	}
+}
+
 func TestProfileGatedServicePlanUpAndDown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
@@ -370,6 +428,9 @@ func cleanupProject(t *testing.T, ctx context.Context, target *compose.Target, r
 		if _, err := target.Client.VolumeRemove(ctx, volume.Name, client.VolumeRemoveOptions{}); err != nil {
 			t.Error(err)
 		}
+	}
+	if _, err := target.RemoveBuildImages(ctx, registration); err != nil {
+		t.Error(err)
 	}
 }
 

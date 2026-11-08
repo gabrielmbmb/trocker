@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/compose/v5/pkg/api"
+	"github.com/moby/moby/client"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
@@ -47,6 +49,54 @@ func TestReleaseStopsAndForgetsWorkspace(t *testing.T) {
 	}
 	if stacks, err := lifecycle.ListStacks(ctx, store, true); err != nil || len(stacks) != 0 {
 		t.Fatalf("stacks after release = %+v, %v", stacks, err)
+	}
+}
+
+// Build tags are rebuildable cache, so release removes them with the workspace,
+// but never a tag it cannot attribute to the workspace.
+func TestReleaseRemovesOnlyWorkspaceBuildTags(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	main, store, registration, target := upWorkspace(t, ctx)
+	if err := os.WriteFile(filepath.Join(main, "compose.yaml"), []byte(strings.Replace(upCompose, "    image: busybox:1.37", "    build: .", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(main, "Dockerfile"), []byte("FROM busybox:1.37\nRUN true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	built := registration.ProjectName() + "-api:latest"
+	// An unlabelled image under the workspace prefix, and a second tag on the
+	// workspace's own image.
+	unowned := registration.ProjectName() + "-unowned:latest"
+	alias := "trocker-test-alias-" + registration.ID + ":latest"
+	for source, tag := range map[string]string{"busybox:1.37": unowned, built: alias} {
+		if _, err := target.Client.ImageTag(ctx, client.ImageTagOptions{Source: source, Target: tag}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := target.Client.ImageRemove(context.WithoutCancel(ctx), tag, client.ImageRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
+				t.Error(err)
+			}
+		})
+	}
+
+	result, err := lifecycle.Release(ctx, main, store, "", true, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Images != 1 {
+		t.Fatalf("removed image tags = %d, want 1", result.Images)
+	}
+	if _, err := target.Client.ImageInspect(ctx, built); !errdefs.IsNotFound(err) {
+		t.Fatalf("workspace build tag after release: %v", err)
+	}
+	for _, tag := range []string{unowned, alias} {
+		if _, err := target.Client.ImageInspect(ctx, tag); err != nil {
+			t.Fatalf("release removed %s: %v", tag, err)
+		}
 	}
 }
 

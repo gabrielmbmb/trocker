@@ -23,7 +23,10 @@ import (
 type ReleaseResult struct {
 	WorkspaceID string
 	Held        compose.Held
-	Released    bool
+	// Images counts the workspace build tags removed. They are cache, not data,
+	// so they are removed without --volumes.
+	Images   int
+	Released bool
 	// RemainingTargets is nonzero when another Docker target still depends on
 	// the registration, so it was kept.
 	RemainingTargets int
@@ -75,6 +78,11 @@ func Release(ctx context.Context, directory string, store state.Store, reference
 		if !remaining.Empty() {
 			return result, &incompleteReleaseError{held: remaining}
 		}
+	}
+	// The registration is the only record of the workspace label, so build tags
+	// left behind here would never be attributed to a workspace again.
+	if result.Images, err = target.RemoveBuildImages(ctx, registration); err != nil {
+		return result, err
 	}
 	if err := removeIdentityMarker(registration); err != nil {
 		return result, err
@@ -189,6 +197,9 @@ func reapDeadWorkspaces(ctx context.Context, store state.Store, target *compose.
 		}
 		held, err := heldResources(ctx, target, registration)
 		if err != nil || !held.Empty() {
+			continue
+		}
+		if _, err := target.RemoveBuildImages(ctx, registration); err != nil {
 			continue
 		}
 		if _, _, err := releaseAssociation(ctx, store, registration.ID, target.ID); err != nil {

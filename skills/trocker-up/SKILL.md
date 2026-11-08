@@ -13,7 +13,7 @@ The project already has Trocker configured. Use its existing `trocker.yaml`; do 
    ```sh
    trocker up --detach
    ```
-   Add `--build` when the task requires rebuilding images. Select services only when requested, including their binding dependencies.
+   Missing images are built automatically. Add `--build` when a Dockerfile, build context, or dependency manifest changed and the images must be rebuilt. Select services only when requested, including their binding dependencies.
 4. Check the result:
    ```sh
    trocker status

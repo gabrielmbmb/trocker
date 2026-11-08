@@ -75,8 +75,8 @@ You can manage the stack directly at any time:
 
 | Command | Purpose |
 | --- | --- |
-| `trocker up --detach` | Create or update the stack and wait for running/healthy services |
-| `trocker up --detach --build` | Rebuild images and start the stack |
+| `trocker up --detach` | Create or update the stack, building only missing images, and wait for running/healthy services |
+| `trocker up --detach --build` | Rebuild every image and start the stack; `--no-build` fails instead of building |
 | `trocker ls` | List running stacks and their worktrees; `--all` includes stopped stacks and worktrees without containers |
 | `trocker status` | Show workspace services and their container state/health |
 | `trocker ps [SERVICE...]` | List running containers; add `--all` for stopped/one-off containers and `--json` for machine-readable output |
@@ -103,7 +103,7 @@ Compose profiles are part of the manifest rather than the invoking shell. Declar
 
 Projects that need host ports to remain stable before startup can opt in with `stable_ports: true`. Trocker assigns one host port per publication, persists it per worktree, and keeps it across `down`/`up`. `plan` shows existing assignments and warns about ones another program holds, `trocker ports` reports them, and `up` uses them exactly: a conflict fails instead of moving the port. `trocker ports reassign` moves an assignment while its service is stopped, keeping its data. A new assignment keeps the port Compose declares when it is free; otherwise it comes from `stable_port_range` (default `20000-32767`), never from the operating system's ephemeral range, where programs listening on port zero come and go. Enabling the policy on a running stack keeps its current ports, except ports inside that ephemeral range, which move once. No per-worktree `.env` is required for host-port values; `trocker ports --json` has the same values for scripts. Assignments are removed by `trocker release`, not by `down`.
 
-**Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Registration tracks the worktree rather than the stack, so `down` never deletes it: `init` releases registrations whose worktree Git no longer records and which own nothing, and `trocker release` removes the rest. Retained volumes keep a registration until they are released with `--volumes`, because the registration is what makes them removable. Images and bind-mounted files are retained. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
+**Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Registration tracks the worktree rather than the stack, so `down` never deletes it: `init` releases registrations whose worktree Git no longer records and which own nothing, and `trocker release` removes the rest. Retained volumes keep a registration until they are released with `--volumes`, because the registration is what makes them removable. Built images and bind-mounted files are retained until `release`, which removes the workspace's build tags along with it; images are rebuildable cache, so this needs no `--volumes`. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
 
 ## Supported scope
 

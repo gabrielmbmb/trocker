@@ -31,7 +31,14 @@ func newUpCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := lifecycle.Up(command.Context(), directory, store, compose.UpOptions{Services: services, Profiles: profiles, Detach: detach, Build: build}, command.ErrOrStderr())
+			noBuild, err := command.Flags().GetBool("no-build")
+			if err != nil {
+				return err
+			}
+			if build && noBuild {
+				return fmt.Errorf("%w: --build cannot be combined with --no-build", ErrUsage)
+			}
+			result, err := lifecycle.Up(command.Context(), directory, store, compose.UpOptions{Services: services, Profiles: profiles, Detach: detach, Build: build, NoBuild: noBuild}, command.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -46,7 +53,8 @@ func newUpCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolP("detach", "d", false, "Run containers in the background")
-	command.Flags().Bool("build", false, "Build images before starting containers")
+	command.Flags().Bool("build", false, "Rebuild every image before starting containers")
+	command.Flags().Bool("no-build", false, "Never build; fail when an image is missing")
 	addProfileFlag(command)
 	return command
 }

@@ -42,6 +42,21 @@ func newReleaseCommand() *cobra.Command {
 	return command
 }
 
+func releasedSummary(result lifecycle.ReleaseResult) string {
+	parts := make([]string, 0, 2)
+	if !result.Held.Empty() {
+		parts = append(parts, result.Held.Summary())
+	}
+	switch result.Images {
+	case 0:
+	case 1:
+		parts = append(parts, "1 image")
+	default:
+		parts = append(parts, fmt.Sprintf("%d images", result.Images))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func writeRelease(out io.Writer, result lifecycle.ReleaseResult) error {
 	var message strings.Builder
 	if result.WorkspaceID == "" {
@@ -50,8 +65,8 @@ func writeRelease(out io.Writer, result lifecycle.ReleaseResult) error {
 		return err
 	}
 	fmt.Fprintf(&message, "Released workspace %s\n", result.WorkspaceID)
-	if !result.Held.Empty() {
-		fmt.Fprintf(&message, "\n  Removed  %s\n", result.Held.Summary())
+	if removed := releasedSummary(result); removed != "" {
+		fmt.Fprintf(&message, "\n  Removed  %s\n", removed)
 	}
 	if !result.Released {
 		fmt.Fprintf(&message, "\nRegistration retained for %d other Docker target(s).\n", result.RemainingTargets)
