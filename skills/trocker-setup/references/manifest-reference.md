@@ -9,6 +9,7 @@ version: 1
 compose:
   - compose.yaml
 profiles: []
+stable_ports: false
 read_write_paths: []
 shared_write_paths: []
 build_contexts: []
@@ -18,7 +19,7 @@ endpoints: {}
 bindings: {}
 ```
 
-`profiles`, `read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`profiles`, `stable_ports`, `read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -76,6 +77,24 @@ profiles:
 - An explicit profile that no Compose service declares is reported with the profiles that are available.
 - `--profile` on `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` overrides the manifest for that command. `plan` and `doctor` report the active profiles and service count.
 - Commands that operate on existing resources (`start`, `stop`, `down`, `release`, `ls`, `ps`, `logs`, `exec`) do not load Compose and do not take a profile selection.
+
+### `stable_ports`
+
+Optional boolean, false by default. When true, Trocker assigns one stable host port to every workspace TCP publication and persists it.
+
+```yaml
+stable_ports: true
+```
+
+- No host-port values are declared in `trocker.yaml`. Trocker derives the publications from Compose `ports` and endpoint declarations backed by `expose`.
+- A new assignment prefers the current publication, a remembered preference, or the concrete host port Compose already resolved. If none is available, Trocker chooses a free OS-assigned port.
+- Once assigned, the value is authoritative: `up` claims it exactly and fails on conflict. It never silently falls back to an ephemeral port.
+- Assignments survive `down`/`up` and are removed by `trocker release`. Disabling `stable_ports` or removing a publication from Compose does not delete assignments; stale assignments remain until the workspace is released.
+- `plan` shows assigned values but does not claim them. Missing assignments are reported as pending and are created by `init` or the next `up`.
+- `trocker ports` shows the stable mapping; `trocker ports --json` emits `workspace_id`, `target_id`, and `{service, container_port, host_port}` entries. Scripts should read this instead of a per-worktree `.env` for host ports.
+- Use endpoint bindings for URLs that contain those ports. The host-port values do not need to be interpolated into Compose.
+- Compose host ports are only seeds. If the value is already assigned to another workspace or is unavailable, Trocker chooses a free port instead. Consumers must read `trocker ports`, not assume a literal Compose value.
+- There is no per-port reallocation command in this version. If a fixed port becomes permanently unavailable, stop the conflicting process or release and re-register the workspace.
 
 ### `read_write_paths`
 

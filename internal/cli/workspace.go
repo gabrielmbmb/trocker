@@ -186,6 +186,11 @@ func runPlan(command *cobra.Command, _ []string) error {
 	for _, name := range result.Project.ServiceNames() {
 		service := result.Project.Services[name]
 		fmt.Fprintf(&message, "  %s: workspace identity, %d loopback publications\n", name, len(service.Ports))
+		for _, port := range service.Ports {
+			if port.Published != "0" {
+				fmt.Fprintf(&message, "    Stable host port: %s -> %d\n", port.Published, port.Target)
+			}
+		}
 		if service.Build != nil {
 			fmt.Fprintf(&message, "    Build tag: %s\n", service.Image)
 		}
@@ -249,7 +254,17 @@ func runPlan(command *cobra.Command, _ []string) error {
 	if result.PlannedPorts > 0 {
 		fmt.Fprintf(&message, "\n%d host ports require coordination at startup; addresses are not allocated by plan.\n", result.PlannedPorts)
 	}
-	message.WriteString("\nOther host ports will be assigned by Docker. No resources were changed.\n")
+	if result.StablePorts {
+		if result.AssignedPorts > 0 {
+			fmt.Fprintf(&message, "\n%d stable host ports are assigned; up claims them exactly.\n", result.AssignedPorts)
+		}
+		if pending := result.Publications - result.AssignedPorts; pending > 0 {
+			fmt.Fprintf(&message, "\n%d stable host ports are pending; run trocker init or trocker up.\n", pending)
+		}
+		message.WriteString("\nNo resources were changed.\n")
+	} else {
+		message.WriteString("\nOther host ports will be assigned by Docker. No resources were changed.\n")
+	}
 	_, err = io.WriteString(command.OutOrStdout(), message.String())
 	return err
 }

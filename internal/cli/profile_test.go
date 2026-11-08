@@ -20,6 +20,7 @@ func TestProfileFlagSurface(t *testing.T) {
 		{name: "run", want: true},
 		{name: "status", want: true},
 		{name: "endpoints", want: true},
+		{name: "ports"},
 		{name: "init"},
 		{name: "start"},
 		{name: "stop"},

@@ -67,7 +67,7 @@ Open your agent in the intended worktree and ask:
 
 The agent uses the existing configuration, checks the plan, and runs `trocker up --detach`. A new worktree needs its own confirmed registration. The agent then checks service state and reports observed endpoint addresses—no manual port assignment required.
 
-**Use the reported addresses.** Ports can change after a restart. A published endpoint is not, by itself, proof that the application is ready.
+**Use the reported addresses.** Ports can change after a restart unless `stable_ports: true` is enabled. A published endpoint is not, by itself, proof that the application is ready.
 
 ## Everyday commands
 
@@ -83,6 +83,7 @@ You can manage the stack directly at any time:
 | `trocker logs [SERVICE...]` | View container logs; supports `--follow`, `--tail`, `--since`, `--until`, and `--timestamps` |
 | `trocker exec SERVICE COMMAND [ARGS...]` | Run a command in a running service container and propagate its exit status |
 | `trocker endpoints` | Show current addresses; add `--json` for machine-readable output |
+| `trocker ports` | Show stable host-port assignments; add `--json` for machine-readable output |
 | `trocker plan` / `trocker doctor` | Preview changes or check configuration without writes |
 | `trocker stop [SERVICE...]` | Stop containers without deleting resources |
 | `trocker start [SERVICE...]` | Restart existing containers without applying configuration edits |
@@ -99,11 +100,13 @@ Use `up`, not `start`, to apply configuration changes. Service arguments to `up`
 
 Compose profiles are part of the manifest rather than the invoking shell. Declare `profiles:` in `trocker.yaml` to make profile-gated services and their endpoints deterministic; `*` activates every profile. A nonempty `--profile` on `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` overrides the manifest for that command. When neither selects profiles, `COMPOSE_PROFILES` from the environment or project `.env` remains the fallback. `plan` and `doctor` report the active profiles and service count.
 
+Projects that need host ports to remain stable before startup can opt in with `stable_ports: true`. Trocker assigns one host port per publication, persists it per worktree, and keeps it across `down`/`up`. `plan` shows existing assignments, `trocker ports` reports them, and `up` uses them exactly: a conflict fails instead of moving the port. New assignments prefer the current or Compose-resolved port before choosing a free one, so enabling the policy does not immediately reshuffle a running stack. No per-worktree `.env` is required for host-port values; `trocker ports --json` has the same values for scripts. Assignments are removed by `trocker release`, not by `down`.
+
 **Data is retained by default.** Teardown verifies ownership and preserves workspace registration. Registration tracks the worktree rather than the stack, so `down` never deletes it: `init` releases registrations whose worktree Git no longer records and which own nothing, and `trocker release` removes the rest. Retained volumes keep a registration until they are released with `--volumes`, because the registration is what makes them removable. Images and bind-mounted files are retained. Generated configuration files are never automatically cleaned up, even with `down --volumes`; old generations can retain secrets.
 
 ## Supported scope
 
-Trocker supports **local Docker targets, ordinary Compose bridge networking, and IPv4 loopback TCP publications**. It replaces host port mappings, removes `container_name`, and isolates managed resource names and build tags.
+Trocker supports **local Docker targets, ordinary Compose bridge networking, and IPv4 loopback TCP publications**. By default it replaces host port mappings with ephemeral ports; `stable_ports: true` instead keeps a persisted workspace-specific assignment for every publication. It removes `container_name` and isolates managed resource names and build tags.
 
 Not every Compose project is supported unchanged. Trocker rejects unsafe sharing and unsupported features, including:
 
@@ -199,7 +202,7 @@ bindings:
 This example requires Compose services named `backend` and `web`, with `backend` declaring TCP port `8000` through `ports` or `expose`. When starting only `web`, declare `backend` in its `depends_on` or select both services.
 
 - **Container addresses** use Compose DNS, such as `http://backend:8000`.
-- **Host addresses** use assigned loopback ports for local applications or browsers, not container-to-container requests.
+- **Host addresses** use assigned loopback ports for local applications or browsers, not container-to-container requests. With `stable_ports: true`, those assignments are stable and available through `trocker ports --json`.
 - **Container bindings** override Compose environment values; **native bindings** apply only to `trocker run`.
 - Every managed container and native application receives `TROCKER_WORKSPACE_ID`.
 

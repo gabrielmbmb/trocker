@@ -465,3 +465,92 @@ func (w *holdAllocatedPort) Write(data []byte) (int, error) {
 	}
 	return len(data), nil
 }
+
+func stableWorkspace(t *testing.T, ctx context.Context) (string, state.Store, workspace.Registration, *compose.Target, uint16) {
+	t.Helper()
+	composeContent := strings.Replace(upCompose, "expose: ['8000']", "ports: ['8000']", 1)
+	manifest := strings.Replace(upManifest, "endpoints:", "stable_ports: true\nendpoints:", 1)
+	main, store, registration, target := workspaceFixture(t, ctx, composeContent, manifest)
+	assigned, err := lifecycle.Ports(ctx, main, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assigned.Ports) != 1 || assigned.Ports[0].Service != "api" || assigned.Ports[0].ContainerPort != 8000 || assigned.Ports[0].HostPort == 0 {
+		t.Fatalf("init assignments = %+v", assigned)
+	}
+	return main, store, registration, target, assigned.Ports[0].HostPort
+}
+
+func TestStablePortsAssignBeforeStartupAndPersist(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	main, store, registration, _, hostPort := stableWorkspace(t, ctx)
+
+	preview, err := lifecycle.Plan(ctx, main, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.StablePorts || preview.Publications != 1 || preview.AssignedPorts != 1 {
+		t.Fatalf("preview counts = %+v", preview)
+	}
+	if got := preview.Project.Services["api"].Ports[0].Published; got != strconv.Itoa(int(hostPort)) {
+		t.Fatalf("preview publication = %q, want %d", got, hostPort)
+	}
+
+	first, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Endpoints) != 1 || first.Endpoints[0].Addresses.Host == nil || first.Endpoints[0].Addresses.Host.Port != hostPort {
+		t.Fatalf("published endpoint = %+v", first.Endpoints)
+	}
+	readEndpointToken(t, ctx, first)
+
+	if err := lifecycle.ApplyLifecycle(ctx, main, store, compose.LifecycleOptions{Operation: compose.Down}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	afterDown, err := lifecycle.Ports(ctx, main, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterDown.Ports) != 1 || afterDown.Ports[0].HostPort != hostPort {
+		t.Fatalf("assignment did not survive down: %+v", afterDown.Ports)
+	}
+	second, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.WorkspaceID != registration.ID || second.Endpoints[0].Addresses.Host == nil || second.Endpoints[0].Addresses.Host.Port != hostPort {
+		t.Fatalf("restart did not reuse stable port: %+v", second.Endpoints)
+	}
+}
+
+func TestStablePortConflictDoesNotFallback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	main, store, registration, target, hostPort := stableWorkspace(t, ctx)
+
+	var listen net.ListenConfig
+	listener, err := listen.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(hostPort))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard); err == nil || !strings.Contains(err.Error(), "stable host port") {
+		t.Fatalf("stable conflict = %v", err)
+	}
+	containers, err := target.Containers(ctx, registration, api.PsOptions{All: true})
+	if err != nil || len(containers) != 0 {
+		t.Fatalf("conflicting startup created containers: %v, %v", containers, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Endpoints[0].Addresses.Host == nil || result.Endpoints[0].Addresses.Host.Port != hostPort {
+		t.Fatal("recovery changed the stable assignment")
+	}
+	readEndpointToken(t, ctx, result)
+}

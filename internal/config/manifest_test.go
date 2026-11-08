@@ -138,6 +138,7 @@ func TestParsePreservesExplicitConfiguration(t *testing.T) {
 	manifest, err := config.Parse([]byte(`
 version: 1
 compose: [base.yaml, override.yaml]
+stable_ports: true
 docker_socket_services: [localstack, dozzle]
 host_access:
   datadog-agent:
@@ -167,6 +168,7 @@ bindings:
 	want := &config.Manifest{
 		Version:              1,
 		Compose:              []string{"base.yaml", "override.yaml"},
+		StablePorts:          true,
 		DockerSocketServices: []string{"localstack", "dozzle"},
 		HostAccess: map[string]config.HostAccessGrant{"datadog-agent": {
 			PID: true, IPC: true, Capabilities: []string{"SYS_PTRACE"},

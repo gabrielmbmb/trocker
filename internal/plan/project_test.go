@@ -115,6 +115,29 @@ volumes:
 	}
 }
 
+func TestBuildAppliesPortsToPublicationsWithoutEndpoints(t *testing.T) {
+	_, path := fixture(t, `services:
+  api:
+    image: busybox:1.37
+    ports: ["18000:8000"]
+`)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration := workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}
+	ports := map[plan.PortKey]uint16{{Service: "api", Port: 8000}: 24001}
+	for _, preview := range []bool{true, false} {
+		project, err := plan.Build(manifest, source, registration, plan.Options{Ports: ports, Preview: preview})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if project.Services["api"].Ports[0].Published != "24001" {
+			t.Fatalf("preview=%v publication = %q", preview, project.Services["api"].Ports[0].Published)
+		}
+	}
+}
+
 func TestInactiveServiceSelectionExplainsProfiles(t *testing.T) {
 	_, path := fixture(t, `services:
   api:

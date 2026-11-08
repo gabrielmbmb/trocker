@@ -29,6 +29,7 @@ func TestInformationalCommands(t *testing.T) {
 		{name: "ps command help", args: []string{"help", "ps"}, want: "--json"},
 		{name: "logs command help", args: []string{"help", "logs"}, want: "--follow"},
 		{name: "exec command help", args: []string{"help", "exec"}, want: "SERVICE COMMAND"},
+		{name: "ports command help", args: []string{"help", "ports"}, want: "--json"},
 		{name: "command help flag", args: []string{"down", "--help"}, want: "--volumes"},
 		{name: "native help", args: []string{"run", "--help"}, want: "SERVICE -- COMMAND"},
 		{name: "shell completion", args: []string{"completion", "bash"}, want: "__start_trocker"},
@@ -67,6 +68,7 @@ func TestInvalidArgumentsDoNotProduceSuccessOutput(t *testing.T) {
 		{"ps", "--unknown"},
 		{"logs", "--unknown"},
 		{"exec", "--unknown"},
+		{"ports", "unexpected"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			t.Parallel()

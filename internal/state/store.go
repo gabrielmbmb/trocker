@@ -23,9 +23,10 @@ import (
 )
 
 type Registry struct {
-	Version    int                      `json:"version"`
-	Workspaces []workspace.Registration `json:"workspaces"`
-	Ports      []PortPreference         `json:"port_preferences,omitempty"`
+	Version     int                      `json:"version"`
+	Workspaces  []workspace.Registration `json:"workspaces"`
+	Ports       []PortPreference         `json:"port_preferences,omitempty"`
+	Assignments []PortAssignment         `json:"port_assignments,omitempty"`
 }
 
 type Store struct{ Directory string }
@@ -211,7 +212,10 @@ func (r Registry) validate() error {
 		}
 		ids[registration.ID], roots[c.Root], gitDirs[c.GitDir] = true, true, true
 	}
-	return r.validatePorts()
+	if err := r.validatePorts(); err != nil {
+		return err
+	}
+	return r.validateAssignments()
 }
 
 // RemoveTarget drops one Docker target association together with the port
@@ -222,6 +226,9 @@ func (r Registry) validate() error {
 func (r *Registry) RemoveTarget(id, targetID string) (removed bool) {
 	r.Ports = slices.DeleteFunc(r.Ports, func(preference PortPreference) bool {
 		return preference.WorkspaceID == id && preference.TargetID == targetID
+	})
+	r.Assignments = slices.DeleteFunc(r.Assignments, func(assignment PortAssignment) bool {
+		return assignment.WorkspaceID == id && assignment.TargetID == targetID
 	})
 	index := slices.IndexFunc(r.Workspaces, func(registration workspace.Registration) bool { return registration.ID == id })
 	if index < 0 {

@@ -18,8 +18,9 @@ The project already has Trocker configured. Use its existing `trocker.yaml`; do 
    ```sh
    trocker status
    trocker endpoints --json
+   trocker ports --json
    ```
-   Report the running services, published addresses, and any failures. Use observed addresses, not guessed or remembered ports. A published endpoint alone does not prove application readiness.
+   Report the running services, published addresses, stable host-port assignments, and any failures. Use observed addresses, not guessed or remembered ports. A published endpoint alone does not prove application readiness. When `stable_ports` is enabled, report `trocker ports --json` as the stable mapping scripts should consume instead of per-worktree `.env` values.
 
    For runtime debugging, use `trocker ps`, `trocker logs [SERVICE...]`, and `trocker exec SERVICE COMMAND...`. They resolve the current worktree's containers by Compose service name; do not address generated container names or fall back to raw `docker`. Use `trocker ps --json` when a script needs the project or container names.
 

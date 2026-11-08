@@ -222,6 +222,8 @@ Check every endpoint:
 
 When the scheme, listening port, or consumer is ambiguous, ask the user or omit the endpoint. A smaller valid manifest is better than an invented one.
 
+If host ports must be known before startup—OAuth redirect registrations, CORS allowlists, debugger attach configs, bookmarks, or external test targets—enable `stable_ports: true`. Trocker then assigns and persists one host port per publication. Do not maintain per-worktree host-port values in `.env` for Trocker: use `trocker ports --json` as the machine-readable mapping and endpoint bindings for URLs. Existing Compose-resolved values seed the first assignment, so migration does not immediately move a running stack. Stable ports survive `down`/`up` and fail on conflict rather than falling back.
+
 ## 6. Add bindings only when the application consumes them
 
 Bindings are runtime configuration overrides. Add one only after finding the actual environment key or configuration value the application reads.
@@ -278,7 +280,7 @@ Then validate in this order:
    ```
    `doctor` and `plan` share the same isolation, binding, and ownership checks. `plan` also shows the workspace/project name, isolated resources, selected services, writable mounts, build contexts, Docker API access, host access, and ports that need coordination.
 
-   `plan` renders host references as `<allocated-at-startup>` and prints no resolved container values, so it proves that the wiring parses, not that it targets the right address. Re-read every binding against the step 6 inventory; a binding that names the wrong key or alias still passes.
+   Without stable assignments, `plan` renders host references as `<allocated-at-startup>` and prints no resolved container values, so it proves that the wiring parses, not that it targets the right address. With `stable_ports`, already assigned values are shown and missing assignments are reported as pending. Re-read every binding against the step 6 inventory; a binding that names the wrong key or alias still passes.
 3. Fix only `trocker.yaml` when validation reports a manifest problem. If validation reports an unregistered workspace or a target that is not associated, run `trocker init` and confirm. If it reports an undeclared writable bind mount, a shared host path, or a build context, return to step 4 and confirm the path with the user; report it as a blocker when a shared path contains the checkout or when a build context is a `service:` reference or remote. If it reports Docker socket access or host access, return to the corresponding subsection in step 4 and confirm the service and grant with the user. If it reports an ambiguous move, a missing marker, a foreign resource, or an unsupported Compose feature, stop and report the exact blocker. Do not work around it by deleting state or rewriting Compose.
 4. Re-run `trocker doctor` and `trocker plan` until both pass.
 
@@ -313,6 +315,7 @@ Report concisely:
 - [ ] `compose:` lists the correct top-level files in order; includes/extends are not listed.
 - [ ] Every included/overridden file and active service has been reviewed.
 - [ ] Every endpoint uses an active service and a declared TCP container port.
+- [ ] If stable host ports are required before startup, `stable_ports: true` is set and `trocker ports --json` replaces per-worktree host-port `.env` values.
 - [ ] Every address-bearing environment key in the project is bound, deliberately left unbound with a reason, or reported as a blocker.
 - [ ] Every binding matches a real runtime consumer and a supported address reference, and is repeated for each service that `extends` a bound consumer.
 - [ ] Every writable bind mount is declared in `read_write_paths` after user confirmation, or is a Docker socket handled through `docker_socket_services`, or is reported as a blocker.

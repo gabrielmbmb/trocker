@@ -8,11 +8,9 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/docker/compose/v5/pkg/api"
 	"github.com/gofrs/flock"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
-	"github.com/gabrielmbmb/trocker/internal/config"
 	"github.com/gabrielmbmb/trocker/internal/plan"
 	"github.com/gabrielmbmb/trocker/internal/state"
 )
@@ -29,39 +27,40 @@ func (a *portAllocation) Close() (err error) {
 	return err
 }
 
-func allocatePorts(ctx context.Context, store state.Store, prepared PlanResult, target *compose.Target, required []plan.PortKey, excluded map[uint16]bool) (allocation *portAllocation, err error) {
+func allocatePorts(ctx context.Context, store state.Store, prepared PlanResult, target *compose.Target, requirements []plan.Requirement, excluded map[uint16]bool) (allocation *portAllocation, err error) {
 	allocation = &portAllocation{ports: make(map[plan.PortKey]uint16)}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, allocation.Close())
 		}
 	}()
-	if len(required) == 0 {
+	if len(requirements) == 0 {
 		return allocation, nil
 	}
-	containers, err := target.Containers(ctx, prepared.Registration, api.PsOptions{All: true})
+	keys := make([]plan.PortKey, 0, len(requirements))
+	for _, requirement := range requirements {
+		keys = append(keys, requirement.Key)
+	}
+	current, err := observedPorts(ctx, target, prepared.Registration, keys)
 	if err != nil {
 		return allocation, err
-	}
-	definitions := make(map[string]config.Endpoint)
-	for _, key := range required {
-		definitions[key.Service+":"+strconv.Itoa(int(key.Port))] = config.Endpoint{Service: key.Service, Port: key.Port, Scheme: "tcp"}
-	}
-	endpoints, err := ResolveEndpoints(definitions, containers)
-	if err != nil {
-		return allocation, err
-	}
-	current := make(map[plan.PortKey]uint16)
-	for _, endpoint := range endpoints {
-		if host := endpoint.Addresses.Host; host != nil && host.Host == "127.0.0.1" {
-			current[plan.PortKey{Service: endpoint.Service, Port: endpoint.ContainerPort}] = host.Port
-		}
 	}
 	registry, err := store.Read()
 	if err != nil {
 		return allocation, err
 	}
-	for _, key := range required {
+	reserved := reservedPorts(registry, requirements, excluded)
+	for _, requirement := range requirements {
+		key := requirement.Key
+		if requirement.HostPort != 0 {
+			lease, err := claimStablePort(ctx, store, requirement, current[key] == requirement.HostPort)
+			if err != nil {
+				return allocation, err
+			}
+			allocation.ports[key] = requirement.HostPort
+			allocation.leases = append(allocation.leases, lease)
+			continue
+		}
 		preferred := current[key]
 		if preferred == 0 {
 			for _, preference := range registry.Ports {
@@ -71,7 +70,7 @@ func allocatePorts(ctx context.Context, store state.Store, prepared PlanResult, 
 				}
 			}
 		}
-		port, lease, err := claimAvailablePort(ctx, store, preferred, current[key] != 0, excluded)
+		port, lease, err := claimAvailablePort(ctx, store, preferred, current[key] != 0, reserved)
 		if err != nil {
 			return allocation, err
 		}
@@ -79,6 +78,51 @@ func allocatePorts(ctx context.Context, store state.Store, prepared PlanResult, 
 		allocation.leases = append(allocation.leases, lease)
 	}
 	return allocation, nil
+}
+
+// reservedPorts prevents dynamic allocation from taking a port another
+// workspace has reserved as stable, even while that workspace is stopped.
+func reservedPorts(registry state.Registry, requirements []plan.Requirement, excluded map[uint16]bool) map[uint16]bool {
+	reserved := make(map[uint16]bool, len(excluded)+len(registry.Assignments)+len(requirements))
+	for port := range excluded {
+		reserved[port] = true
+	}
+	for _, assignment := range registry.Assignments {
+		reserved[assignment.HostPort] = true
+	}
+	for _, requirement := range requirements {
+		if requirement.HostPort != 0 {
+			reserved[requirement.HostPort] = true
+		}
+	}
+	return reserved
+}
+
+// claimStablePort claims exactly the assigned port. Unlike a remembered
+// preference, an unavailable stable port is an error, never a fallback.
+func claimStablePort(ctx context.Context, store state.Store, requirement plan.Requirement, running bool) (*flock.Flock, error) {
+	port := requirement.HostPort
+	lease, acquired, err := store.TryClaimPort(ctx, port)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, &stablePortError{requirement: requirement}
+	}
+	fail := func(cause error) (*flock.Flock, error) {
+		return nil, errors.Join(&stablePortError{requirement: requirement, cause: cause}, lease.Close())
+	}
+	if running {
+		return lease, nil
+	}
+	available, err := portAvailable(ctx, port)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("cannot probe a stable host port: %w", err), lease.Close())
+	}
+	if !available {
+		return fail(nil)
+	}
+	return lease, nil
 }
 
 func claimAvailablePort(ctx context.Context, store state.Store, preferred uint16, running bool, excluded map[uint16]bool) (uint16, *flock.Flock, error) {
@@ -148,8 +192,32 @@ func claimAvailablePort(ctx context.Context, store state.Store, preferred uint16
 	return 0, nil, &allocationError{}
 }
 
-func startPlanned(ctx context.Context, store state.Store, prepared PlanResult, target *compose.Target, options compose.UpOptions, output io.Writer) (*portAllocation, error) {
-	required, err := plan.RequiredPorts(prepared.manifest, prepared.Project)
+func portRequirements(prepared PlanResult, stable map[plan.PortKey]uint16) ([]plan.Requirement, error) {
+	if !prepared.StablePorts {
+		required, err := plan.RequiredPorts(prepared.manifest, prepared.Project)
+		if err != nil {
+			return nil, err
+		}
+		requirements := make([]plan.Requirement, 0, len(required))
+		for _, key := range required {
+			requirements = append(requirements, plan.Requirement{Key: key})
+		}
+		return requirements, nil
+	}
+	publications := plan.Publications(prepared.manifest, prepared.Project)
+	requirements := make([]plan.Requirement, 0, len(publications))
+	for _, key := range publications {
+		hostPort := stable[key]
+		if hostPort == 0 {
+			return nil, fmt.Errorf("stable port assignment is missing for %s:%d; retry trocker init or trocker up", key.Service, key.Port)
+		}
+		requirements = append(requirements, plan.Requirement{Key: key, HostPort: hostPort})
+	}
+	return requirements, nil
+}
+
+func startPlanned(ctx context.Context, store state.Store, prepared PlanResult, target *compose.Target, options compose.UpOptions, stable map[plan.PortKey]uint16, output io.Writer) (*portAllocation, error) {
+	requirements, err := portRequirements(prepared, stable)
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +225,15 @@ func startPlanned(ctx context.Context, store state.Store, prepared PlanResult, t
 	if err != nil {
 		return nil, err
 	}
+	fixed := make(map[uint16]plan.Requirement)
+	for _, requirement := range requirements {
+		if requirement.HostPort != 0 {
+			fixed[requirement.HostPort] = requirement
+		}
+	}
 	excluded := make(map[uint16]bool)
 	for attempt := range 3 {
-		allocation, err := allocatePorts(ctx, store, prepared, target, required, excluded)
+		allocation, err := allocatePorts(ctx, store, prepared, target, requirements, excluded)
 		if err != nil {
 			return nil, err
 		}
@@ -177,6 +251,11 @@ func startPlanned(ctx context.Context, store state.Store, prepared PlanResult, t
 		closeErr := allocation.Close()
 		if ctx.Err() != nil {
 			return nil, errors.Join(ctx.Err(), closeErr)
+		}
+		for _, port := range failed {
+			if requirement, ok := fixed[port]; ok {
+				return nil, errors.Join(&stablePortError{requirement: requirement, cause: err}, closeErr)
+			}
 		}
 		matched := false
 		for _, port := range failed {
@@ -230,6 +309,28 @@ func rememberAllocations(ctx context.Context, store state.Store, prepared PlanRe
 	}
 	return store.RememberPorts(ctx, preferences)
 }
+
+func requiredEndpointName(key plan.PortKey) string {
+	return key.Service + "#" + strconv.Itoa(int(key.Port))
+}
+
+type stablePortError struct {
+	requirement plan.Requirement
+	cause       error
+}
+
+func (e *stablePortError) Error() string {
+	return fmt.Sprintf("stable host port %d for %s:%d is unavailable", e.requirement.HostPort, e.requirement.Key.Service, e.requirement.Key.Port)
+}
+
+func (*stablePortError) Help() string {
+	return "stop the process using the port, then retry trocker up"
+}
+
+func (*stablePortError) Note() string {
+	return "the assignment is retained; Trocker does not choose another port"
+}
+func (e *stablePortError) Unwrap() error { return e.cause }
 
 type allocationError struct{}
 

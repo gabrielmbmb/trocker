@@ -18,6 +18,14 @@ type PortKey struct {
 	Port    uint16
 }
 
+// Requirement is one publication that must be resolved before startup. A zero
+// HostPort is allocated dynamically; a nonzero value is stable and must never
+// be replaced with another port.
+type Requirement struct {
+	Key      PortKey
+	HostPort uint16
+}
+
 type Options struct {
 	Services []string
 	Ports    map[PortKey]uint16
@@ -60,12 +68,7 @@ func RequiredPorts(manifest *config.Manifest, project *types.Project) ([]PortKey
 	for key := range required {
 		keys = append(keys, key)
 	}
-	slices.SortFunc(keys, func(a, b PortKey) int {
-		if a.Service != b.Service {
-			return strings.Compare(a.Service, b.Service)
-		}
-		return cmp.Compare(a.Port, b.Port)
-	})
+	slices.SortFunc(keys, comparePortKeys)
 	return keys, nil
 }
 
@@ -87,4 +90,62 @@ func resolveHost(endpoint config.Endpoint, component string, options Options) (s
 	default:
 		return endpoint.Scheme + "://127.0.0.1:" + value, nil
 	}
+}
+
+// Publications returns every TCP host publication in the selected project,
+// including endpoint ports that Trocker will create from expose. Stable-port
+// mode assigns one host port to each of these.
+func Publications(manifest *config.Manifest, project *types.Project) []PortKey {
+	keys := make(map[PortKey]bool)
+	for name, service := range project.Services {
+		for _, port := range service.Ports {
+			if port.Target > 0 && port.Target <= 65535 && (port.Protocol == "" || port.Protocol == "tcp") {
+				keys[PortKey{Service: name, Port: uint16(port.Target)}] = true
+			}
+		}
+	}
+	for _, endpoint := range manifest.Endpoints {
+		if _, selected := project.Services[endpoint.Service]; selected {
+			keys[PortKey{Service: endpoint.Service, Port: endpoint.Port}] = true
+		}
+	}
+	publications := make([]PortKey, 0, len(keys))
+	for key := range keys {
+		publications = append(publications, key)
+	}
+	slices.SortFunc(publications, comparePortKeys)
+	return publications
+}
+
+func comparePortKeys(a, b PortKey) int {
+	if a.Service != b.Service {
+		return strings.Compare(a.Service, b.Service)
+	}
+	return cmp.Compare(a.Port, b.Port)
+}
+
+// ComposeHostPort returns a single concrete host port currently published by
+// Compose for one service port. It is used only to seed a new stable assignment;
+// ranges and ambiguous bindings have no single value to preserve.
+func ComposeHostPort(source *types.Project, key PortKey) (uint16, bool) {
+	service, exists := source.Services[key.Service]
+	if !exists {
+		return 0, false
+	}
+	var found uint16
+	for _, publication := range service.Ports {
+		if publication.Target != uint32(key.Port) || publication.Protocol != "" && publication.Protocol != "tcp" {
+			continue
+		}
+		value, err := strconv.ParseUint(publication.Published, 10, 16)
+		if err != nil || value == 0 {
+			continue
+		}
+		port := uint16(value)
+		if found != 0 && found != port {
+			return 0, false
+		}
+		found = port
+	}
+	return found, found != 0
 }

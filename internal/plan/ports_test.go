@@ -62,3 +62,28 @@ func TestAllocatedBindingsAndAliases(t *testing.T) {
 		t.Fatal("selection changed", err)
 	}
 }
+
+func TestPublicationsIncludeComposeAndEndpointPorts(t *testing.T) {
+	_, path := fixture(t, `services:
+  api:
+    image: busybox:1.37
+    ports: ["18000:8000"]
+    expose: ['9000']
+`)
+	manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Endpoints = map[string]config.Endpoint{"extra": {Service: "api", Port: 9000, Scheme: "http"}}
+	publications := plan.Publications(manifest, source)
+	expected := []plan.PortKey{{Service: "api", Port: 8000}, {Service: "api", Port: 9000}}
+	if !reflect.DeepEqual(publications, expected) {
+		t.Fatalf("publications = %v, want %v", publications, expected)
+	}
+	if port, ok := plan.ComposeHostPort(source, expected[0]); !ok || port != 18000 {
+		t.Fatalf("Compose host port = %d, %v", port, ok)
+	}
+	if _, ok := plan.ComposeHostPort(source, expected[1]); ok {
+		t.Fatal("exposed-only port has a concrete Compose publication")
+	}
+}

@@ -24,6 +24,9 @@ type PlanResult struct {
 	manifest       *config.Manifest
 	source         *types.Project
 	PlannedPorts   int
+	StablePorts    bool
+	Publications   int
+	AssignedPorts  int
 	NativeFiles    int
 	ContainerFiles int
 }
@@ -33,19 +36,29 @@ func preparePlan(ctx context.Context, directory string, store state.Store, servi
 	if err != nil {
 		return PlanResult{}, err
 	}
+	return preparePlanFor(ctx, registration, services, profiles, nil)
+}
+
+func preparePlanFor(ctx context.Context, registration workspace.Registration, services, profiles []string, ports map[plan.PortKey]uint16) (PlanResult, error) {
 	manifest, source, err := compose.LoadForPlan(ctx, filepath.Join(registration.Checkout.Root, "trocker.yaml"), profiles)
 	if err != nil {
 		return PlanResult{}, err
 	}
-	project, err := plan.Build(manifest, source, registration, plan.Options{Services: services, Preview: true})
+	project, err := plan.Build(manifest, source, registration, plan.Options{Services: services, Ports: ports, Preview: true})
 	if err != nil {
 		return PlanResult{}, err
+	}
+	result := PlanResult{Registration: registration, Project: project, manifest: manifest, source: source, StablePorts: manifest.StablePorts}
+	if manifest.StablePorts {
+		result.Publications, result.AssignedPorts = publicationCounts(manifest, project, ports)
+		return result, nil
 	}
 	required, err := plan.RequiredPorts(manifest, project)
 	if err != nil {
 		return PlanResult{}, err
 	}
-	return PlanResult{Registration: registration, Project: project, manifest: manifest, source: source, PlannedPorts: len(required)}, nil
+	result.PlannedPorts = len(required)
+	return result, nil
 }
 
 func registeredTarget(ctx context.Context, registration workspace.Registration) (*compose.Target, error) {
@@ -77,10 +90,41 @@ func Plan(ctx context.Context, directory string, store state.Store, profiles []s
 		return PlanResult{}, err
 	}
 	defer func() { err = errors.Join(err, target.Close()) }()
+	registry, err := store.Read()
+	if err != nil {
+		return PlanResult{}, err
+	}
+	result, err = applyAssignments(result, assignmentMap(registry, result.Registration.ID, target.ID))
+	if err != nil {
+		return PlanResult{}, err
+	}
 	if err := target.CheckOwnership(ctx, result.Project, result.Registration); err != nil {
 		return PlanResult{}, err
 	}
 	return result, nil
+}
+
+func applyAssignments(result PlanResult, assignments map[plan.PortKey]uint16) (PlanResult, error) {
+	if !result.StablePorts || len(assignments) == 0 {
+		return result, nil
+	}
+	project, err := plan.Build(result.manifest, result.source, result.Registration, plan.Options{Ports: assignments, Preview: true})
+	if err != nil {
+		return PlanResult{}, err
+	}
+	result.Project = project
+	_, result.AssignedPorts = publicationCounts(result.manifest, project, assignments)
+	return result, nil
+}
+
+func publicationCounts(manifest *config.Manifest, project *types.Project, ports map[plan.PortKey]uint16) (publications, assigned int) {
+	keys := plan.Publications(manifest, project)
+	for _, key := range keys {
+		if ports[key] != 0 {
+			assigned++
+		}
+	}
+	return len(keys), assigned
 }
 
 func Up(ctx context.Context, directory string, store state.Store, options compose.UpOptions, logs io.Writer) (result EndpointResult, err error) {
@@ -106,7 +150,11 @@ func Up(ctx context.Context, directory string, store state.Store, options compos
 	if err := target.CheckOwnership(ctx, prepared.Project, prepared.Registration); err != nil {
 		return result, err
 	}
-	allocation, err := startPlanned(ctx, store, prepared, target, options, logs)
+	stable, err := ensureStableAssignments(ctx, store, prepared, target)
+	if err != nil {
+		return result, err
+	}
+	allocation, err := startPlanned(ctx, store, prepared, target, options, stable, logs)
 	if err != nil {
 		return result, err
 	}
@@ -119,10 +167,17 @@ func Up(ctx context.Context, directory string, store state.Store, options compos
 		return result, err
 	}
 	definitions := make(map[string]config.Endpoint)
+	reported := make(map[string]bool)
 	for name, endpoint := range prepared.manifest.Endpoints {
 		if _, ok := prepared.Project.Services[endpoint.Service]; ok {
 			definitions[name] = endpoint
+			reported[name] = true
 		}
+	}
+	// Stable publications need not be named endpoints. Observe every allocation
+	// so a remembered mapping is verified against a real publication.
+	for key := range allocation.ports {
+		definitions[requiredEndpointName(key)] = config.Endpoint{Service: key.Service, Port: key.Port, Scheme: "tcp"}
 	}
 	endpoints, err := ResolveEndpoints(definitions, containers)
 	if err != nil {
@@ -131,5 +186,11 @@ func Up(ctx context.Context, directory string, store state.Store, options compos
 	if err := rememberAllocations(ctx, store, prepared, target.ID, allocation, endpoints, options.Detach); err != nil {
 		return result, err
 	}
-	return EndpointResult{SchemaVersion: 1, WorkspaceID: prepared.Registration.ID, TargetID: target.ID, Endpoints: endpoints}, nil
+	visible := make([]Endpoint, 0, len(reported))
+	for _, endpoint := range endpoints {
+		if reported[endpoint.Name] {
+			visible = append(visible, endpoint)
+		}
+	}
+	return EndpointResult{SchemaVersion: 1, WorkspaceID: prepared.Registration.ID, TargetID: target.ID, Endpoints: visible}, nil
 }

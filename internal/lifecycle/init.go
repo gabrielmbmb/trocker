@@ -205,7 +205,27 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 	if err := applyInitManifest(prepared); err != nil {
 		return registration, err
 	}
-	return registerLocked(ctx, store, proposal.Checkout, proposal.TargetID)
+	registration, err = registerLocked(ctx, store, proposal.Checkout, proposal.TargetID)
+	if err != nil {
+		return registration, err
+	}
+	// Stable assignments are metadata, not containers. Creating them here makes
+	// the values available before the first startup and gives external consumers
+	// a chance to be configured first.
+	manifest, err := config.Load(filepath.Join(proposal.Checkout.Root, "trocker.yaml"))
+	if err != nil {
+		return registration, err
+	}
+	if manifest.StablePorts {
+		planned, err := preparePlan(ctx, proposal.Checkout.Root, store, nil, nil)
+		if err != nil {
+			return registration, err
+		}
+		if _, err := ensureStableAssignments(ctx, store, planned, target); err != nil {
+			return registration, err
+		}
+	}
+	return registration, nil
 }
 
 // Recheck under the workspace lock before any manifest/registry writes. Prompts

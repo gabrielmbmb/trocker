@@ -103,3 +103,57 @@ func TestPortPreferencesValidateAndPreserveRegistration(t *testing.T) {
 		}
 	}
 }
+
+func TestPortAssignmentsValidateAndRemoveWithTarget(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "state")
+	store := state.Store{Directory: directory}
+	first, err := lifecycle.Register(t.Context(), store, fakeCheckout(t, directory, "assignments-first"), "daemon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := lifecycle.Register(t.Context(), store, fakeCheckout(t, directory, "assignments-second"), "daemon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := state.PortAssignment{WorkspaceID: first.ID, TargetID: "daemon", Service: "api", ContainerPort: 8000, HostPort: 24001}
+	if err := store.AssignPorts(t.Context(), []state.PortAssignment{assignment}); err != nil {
+		t.Fatal(err)
+	}
+	assignment.HostPort = 24002
+	if err := store.AssignPorts(t.Context(), []state.PortAssignment{assignment}); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := store.Read()
+	if err != nil || len(registry.Assignments) != 1 || registry.Assignments[0] != assignment {
+		t.Fatal("assignment lost identity or duplicated endpoint", err)
+	}
+	before := string(readRegistry(t, directory))
+	for _, invalid := range []state.PortAssignment{
+		{WorkspaceID: first.ID, TargetID: "other", Service: "api", ContainerPort: 8000, HostPort: 24003},
+		{WorkspaceID: first.ID, TargetID: "daemon", Service: "api", ContainerPort: 8000},
+	} {
+		if err := store.AssignPorts(t.Context(), []state.PortAssignment{invalid}); err == nil {
+			t.Fatal("invalid assignment accepted")
+		}
+		if string(readRegistry(t, directory)) != before {
+			t.Fatal("rejected assignment rewrote registry")
+		}
+	}
+	conflict := state.PortAssignment{WorkspaceID: second.ID, TargetID: "daemon", Service: "api", ContainerPort: 8000, HostPort: assignment.HostPort}
+	if err := store.AssignPorts(t.Context(), []state.PortAssignment{conflict}); !errors.Is(err, state.ErrAssignmentConflict) {
+		t.Fatalf("conflicting assignment error = %v", err)
+	}
+	if string(readRegistry(t, directory)) != before {
+		t.Fatal("conflicting assignment rewrote registry")
+	}
+	if err := store.Update(t.Context(), func(registry *state.Registry) error {
+		registry.RemoveTarget(first.ID, "daemon")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registry, err = store.Read()
+	if err != nil || len(registry.Assignments) != 0 {
+		t.Fatalf("assignment survived target removal: %+v, %v", registry.Assignments, err)
+	}
+}

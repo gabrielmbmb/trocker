@@ -47,6 +47,7 @@ Docker configuration/context/environment resolution belongs to the SDK. Target a
 | Desired services | Compose project plus explicit Trocker configuration |
 | Existing resources and publications | Live SDK observations |
 | Proposed transformations | Pure plan; not proof of runtime state |
+| Stable port assignments | Registry contract; claimed exactly at startup |
 | Remembered ports | Preferences; not reservations or observed endpoints |
 | Generated-file index | Cache hint; not evidence that old files are unused |
 
@@ -60,6 +61,7 @@ compose:
   - compose.yaml
 profiles:
   - workos-local
+stable_ports: true
 endpoints:
   api:
     service: backend
@@ -78,6 +80,8 @@ bindings:
 `compose` is a nonempty ordered path list; relative paths resolve from the manifest directory. Compose contents and merging are SDK concerns. `endpoints` and `bindings` are optional. Binding service names must exist in the active Compose project.
 
 `profiles` is an optional ordered list of Compose profile names. A nonempty list replaces `COMPOSE_PROFILES` from the environment or project `.env`; `*` activates every profile. An empty or omitted list preserves the environment fallback, and `profiles: []` is therefore the same as omitting the field. Profile names use Compose's `[A-Za-z0-9][A-Za-z0-9_.-]*` shape, duplicates are rejected, and an explicit name that no Compose service declares fails with the available profiles. The `--profile` flag on `plan`, `doctor`, `up`, `run`, `status`, and `endpoints` is a one-command override that replaces the manifest selection. Commands that operate on existing resources (`start`, `stop`, `down`, `release`, `ls`, `ps`, `logs`, `exec`) do not load Compose and remain profile-agnostic. `plan` and `doctor` report the active profiles and resulting service count.
+
+`stable_ports` is an optional boolean. It is false by default, preserving ephemeral host-port allocation. When true, every selected TCP publication receives one persisted workspace-specific host port, including publications created from endpoint `expose` declarations. New assignments prefer the current publication, a remembered preference, or the concrete port Compose already resolved before choosing a free OS-assigned port, so enabling the policy can adopt existing values without a manual migration. Once assigned, the value is authoritative: `up` claims it exactly, a conflict fails, and `down` retains it. `trocker ports` reports assignments without loading Compose or observing containers. A profile-gated publication is assigned when its service becomes active. `release` removes the target's assignments.
 
 Endpoint aliases match `[a-z][a-z0-9_]*`. Every endpoint declares a service, a container port from 1–65535, and a scheme (`http`, `https`, `ws`, `wss`, or `tcp`). Its port must match a TCP `ports` target or `expose` declaration. Schemes describe existing listeners; they do not configure TLS or prove readiness.
 
@@ -115,12 +119,13 @@ Existing resources must match both Compose and workspace ownership. Familiar nam
 
 | Command | Workflow and mutation boundary |
 | --- | --- |
-| `init` | Discover Git, validate existing configuration or propose minimal SDK-selected Compose files, resolve the target, show changes, confirm, then persist configuration/registration. Confirmation is a terminal prompt or a digest accepted with `--confirm`; `--dry-run` reports the same proposal and digest and writes nothing. Does not infer endpoints/bindings or create Docker resources. |
-| `plan`, `doctor` | Load confirmed identity, configuration, and relevant observations; validate and plan without writes, allocation claims, or rendered output. `doctor` checks the supported subset, not general security. |
-| `up` | Lock the workspace/target, load and validate, observe ownership, plan and allocate, render selected container files, apply through Compose, verify publications, and remember confirmed mappings. |
+| `init` | Discover Git, validate existing configuration or propose minimal SDK-selected Compose files, resolve the target, show changes, confirm, then persist configuration/registration. With `stable_ports`, also assigns missing host ports for active services after registration. Confirmation is a terminal prompt or a digest accepted with `--confirm`; `--dry-run` reports the same proposal and digest and writes nothing. Does not infer endpoints/bindings or create Docker resources. |
+| `plan`, `doctor` | Load confirmed identity, configuration, and relevant observations; validate and plan without writes, allocation claims, or rendered output. Stable assignments already in the registry are shown; missing ones are reported as pending. `doctor` checks the supported subset, not general security. |
+| `up` | Lock the workspace/target, load and validate, observe ownership, ensure stable assignments, plan and allocate, render selected container files, apply through Compose, verify publications, and remember confirmed mappings. |
 | `start`, `stop`, `down` | Reconstruct existing resources through the SDK, verify ownership, and perform the lifecycle operation without reloading current Compose/manifest files. Registration is preserved. |
 | `release [WORKSPACE]` | Resolve the workspace by directory or id prefix, verify the target association, stop owned resources through the `down` path, then delete the worktree marker and registry entry. Retained volumes keep the registration unless `--volumes` is set. Releasing an already-released workspace is a successful no-op. |
 | `status`, `endpoints` | Query owned resources without changing files or Docker state. Unregistered workspaces fail rather than registering implicitly. |
+| `ports` | Read persisted stable host-port assignments for the current workspace and target. Does not load Compose, observe containers, claim ports, or acquire locks. |
 | `ps` | Read registration and owned containers, then list or encode them as JSON without loading current Compose/manifest files, changing Docker state, or acquiring locks. Default output includes running non-one-off containers; `--all` adds stopped and one-off containers. |
 | `logs`, `exec` | Read owned containers, resolve requested Compose service names against that snapshot, and stream logs or run a command in the selected container without acquiring workspace locks. `exec` requires a running container and propagates its exit status. |
 | `ls` | Read the registry, checkout liveness, and live containers for the selected Docker target; list stacks with their worktree paths and mark registrations whose worktree is gone, including whether Git metadata still records it. Does not load manifests, run Git commands, or acquire locks. |
@@ -128,7 +133,7 @@ Existing resources must match both Compose and workspace ownership. Familiar nam
 
 `up SERVICE...` uses Compose's dependency closure. Services referenced by bindings must be selected or declared in `depends_on`; bindings do not invent readiness dependencies. Detached startup waits up to two minutes for Compose running/healthy readiness. Foreground startup streams logs and holds the workspace mutation lock until the session ends.
 
-`start` preserves existing container configuration and generated mounts; use `up` to apply changes. Docker-assigned ports may change after restart. `stop` retains resources. `down` removes owned containers/networks but retains volumes; `--volumes` additionally removes verified managed named and attached anonymous volumes using Engine semantics. Unattached anonymous volumes are not swept. Images, external resources, bind-mounted files, generated files, and workspace registration remain; `down` is a stack command, and only `trocker release` deletes a registration.
+`start` preserves existing container configuration and generated mounts; use `up` to apply changes. Ephemeral Docker-assigned ports may change after restart; stable assignments remain exact. `stop` retains resources. `down` removes owned containers/networks but retains volumes; `--volumes` additionally removes verified managed named and attached anonymous volumes using Engine semantics. Unattached anonymous volumes are not swept. Images, external resources, bind-mounted files, generated files, and workspace registration remain; `down` is a stack command, and only `trocker release` deletes a registration.
 
 Compose recreation prompts are never automatically approved, orphans are not automatically removed, and failed startup does not roll back volumes. Reinspect after partial failure and retry after correction; do not assume that nothing was created.
 
@@ -136,7 +141,9 @@ Compose recreation prompts are never automatically approved, orphans are not aut
 
 Prefer Docker-assigned ports whenever consumers can wait for discovery. Container bindings or file inputs requiring a host port/URL before startup need coordinated assignments. Native bindings consume already-running publications and do not allocate ports.
 
-Reuse verified mappings first, then available remembered preferences, then OS-selected ephemeral candidates. Probe conservatively for loopback and wildcard conflicts. A probe or lease is not a socket reservation against unrelated programs; Docker's successful bind is authoritative.
+Without `stable_ports`, reuse verified mappings first, then available remembered preferences, then OS-selected ephemeral candidates. Probe conservatively for loopback and wildcard conflicts. A probe or lease is not a socket reservation against unrelated programs; Docker's successful bind is authoritative.
+
+With `stable_ports`, the registry assignment replaces preference-based selection for every publication. Missing assignments are created from the current publication, a remembered preference, or the concrete Compose value when available, otherwise from a free OS-assigned port. The resulting host ports are unique across all persisted assignments, and dynamic allocation avoids every stable assignment even while its workspace is stopped. Startup claims each exact port, probes loopback and wildcard listeners, and fails on conflict; it never retries a stable port with an ephemeral replacement. The retry-with-new-bindings path applies only to dynamic ports. Assignments survive `down` and are deleted with the target by `release`; publications removed from Compose do not prune assignments automatically.
 
 Per-port OS-backed file locks coordinate concurrent Trocker processes across local daemon identities sharing the same user state directory. Process exit releases claims; stale lock files do not require PID-based adoption or deletion. Limits are 32 candidate probes per publication and three startup attempts. Retry only recognized Engine bind failures corroborated by owned-container failed-start state. Refresh observations, assignments, bindings, and rendered files on retry; never terminate a competing listener or retry unrelated errors as bind conflicts.
 
@@ -148,7 +155,7 @@ Lock scopes are deliberately separate:
 - Registry locks protect short metadata updates, never builds, pulls, readiness waits, or child lifetimes.
 - Generated-file consumer locks protect only generation comparison/publication.
 
-Only verified publications become remembered preferences. Plans and read-only commands neither claim ports nor present remembered/proposed addresses as live endpoints.
+Only verified publications become remembered preferences. Stable assignments are configuration contracts, not live observations: `plan` may show their values but never claims them, and `endpoints` still reports only observed publications. Plans and read-only commands neither claim ports nor present remembered/proposed addresses as live endpoints.
 
 ## Persistence
 
@@ -158,7 +165,7 @@ Only verified publications become remembered preferences. Plans and read-only co
 | macOS | `~/Library/Application Support/trocker` |
 | Windows | `%LOCALAPPDATA%\Trocker` |
 
-Versioned JSON and atomic writes hold minimal workspace/target associations and port preferences. OS locks coordinate processes. Unix state is private; Windows registry state relies on the user profile's inherited ACL. Corrupt or unsupported state is an error, not an empty registry.
+Versioned JSON and atomic writes hold minimal workspace/target associations, stable port assignments, and port preferences. OS locks coordinate processes. Unix state is private; Windows registry state relies on the user profile's inherited ACL. Corrupt or unsupported state is an error, not an empty registry.
 
 Do not persist a duplicate Docker inventory, full Compose projects, resolved environments, or secrets in registry metadata. Generated application files are the explicit exception for rendered content and have their own private storage policy.
 
@@ -210,10 +217,12 @@ Exit status is 0 for success, 1 for configuration/runtime failures, and 2 for CL
 
 `ps --json` emits schema version 1 with `workspace_id`, the Compose `project`, and a `containers` array of `name`, `service`, `state`, and `health`. The array is `[]` when nothing matches. It reads only registration and owned live containers, so it does not require current Compose or manifest files.
 
+`ports --json` emits schema version 1 with `workspace_id`, `target_id`, and service/container-port-sorted `ports`. Each entry contains `service`, `container_port`, and `host_port`; the array is `[]` when no stable assignments exist. It reads the registry and target association only.
+
 `endpoints --json` emits schema version 1 with `workspace_id`, `target_id`, and alias-sorted `endpoints`. Each endpoint contains `name`, `service`, `container_port`, `scheme`, `state`, and `addresses` with container/host address objects (`host`, `port`, and `url` except for TCP). States are `published`, `stopped`, or `missing`; stopped/missing publications have null host addresses. Published means an observed running mapping, not application readiness. Ambiguous or replicated mappings and ownership conflicts fail rather than selecting arbitrarily. An unreachable daemon is an error, not a fabricated missing result. JSON failures leave stdout empty.
 
 ## Validation and limits
 
 Tests protect Trocker's decisions and safety contracts: pure transformations, identity, read-only behavior, ownership, retention, concurrent allocation/publication, secret-safe failures, and interrupted-operation recovery. Compose loader fixtures live in `internal/compose/testdata/contracts`; integration tests use real disposable resources, never a developer's existing stack. Do not mock SDK calls merely to verify their sequence or retest SDK internals.
 
-Current limits include retained-resource listing, explicit recovery, intentional sharing policies, remote targets, UDP/IPv6 publications, Windows native execution/generated-file delivery, and generated-file cleanup. These are not implicit capabilities. There is no daemon, generic plugin/workflow framework, cloud-resource manager, gateway, automatic TLS, or application-specific OAuth/CORS rewriting.
+Current limits include retained-resource listing, explicit recovery, intentional sharing policies, stable-port reallocation, remote targets, UDP/IPv6 publications, Windows native execution/generated-file delivery, and generated-file cleanup. These are not implicit capabilities. There is no daemon, generic plugin/workflow framework, cloud-resource manager, gateway, automatic TLS, or application-specific OAuth/CORS rewriting.

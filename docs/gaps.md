@@ -20,10 +20,11 @@ Sections are ordered by whether adoption is possible at all: §1 rejects the Com
 | §3.4 no `logs` | `trocker logs [SERVICE...]` streams owned container logs without locks; `--follow`, `--tail`, `--since`, `--until`, and `--timestamps` map to the Compose log options. |
 | §3.5 no `exec`/`ps` | `trocker ps [--all] [--json]` reports the Compose project and container names, services, states, and health; `trocker exec SERVICE COMMAND...` addresses containers by service name and preserves the child exit status. |
 | §3.6 profiles are environment-only | `profiles:` in `trocker.yaml` selects Compose profiles explicitly; `--profile` overrides it on `plan`, `doctor`, `up`, `run`, `status`, and `endpoints`; `COMPOSE_PROFILES` remains the fallback. `plan`/`doctor` report active profiles and service count. |
+| §2.1–§2.3 declarable stable host ports | `stable_ports: true` assigns and persists one host port per workspace publication. Existing observed, remembered, or Compose-resolved values seed the first assignment; later startups claim the exact port and fail on conflict instead of falling back. `trocker ports --json` exposes the mapping before startup, and `plan` shows assigned values without claiming them. |
 
 Re-verified against the adopter with a rebuilt binary: the full declaration set loads and builds with default profiles (16 active services) and with all five profiles enabled (21 services). Removing each declaration on its own is still rejected, naming the service and the path — `read_write_paths`, `shared_write_paths`, `docker_socket_services`, `host_access`, and, once `kennedy-frontend` is active, `build_contexts`.
 
-Sections other than §3.4–§3.6 remain unchanged. Those three preserve the original problem statement with their resolution noted.
+Sections other than §2 and §3.4–§3.6 remain unchanged. Those sections preserve the original problem statement with their resolution noted.
 
 One correction to the inventory: only `kennedy-frontend` declares `additional_contexts`, and both of its values are inside the checkout; `website` and `swag` do not use it. The writable `~/.aws/sso/cache` mount used by `apollo`, `hubble`, `kennedy-api`, `kennedy-worker`, and `asset-sentinel-worker` — the residual §1.1 case, since `read_write_paths` stops at the checkout — is now expressible as `shared_write_paths`.
 
@@ -74,6 +75,8 @@ The deny-list rejects `services.*.deploy` entirely, so a project that only sets 
 
 ## 2. Port model
 
+> Resolved by `stable_ports: true` and `trocker ports`: Trocker now owns persisted per-workspace host-port assignments instead of relying on remembered preferences. The original analysis follows.
+
 The model is coherent — ephemeral (`Published: "0"`) publications on loopback, remembered preferences for reuse, coordinated pre-start allocation for container bindings — but it has no room for a consumer that must know the port before the stack starts.
 
 ### 2.1 No declarable host port
@@ -95,7 +98,7 @@ This is the real cost. Several classes of consumer need the *value* of a port ou
 
 Remembered preferences make the port *usually* stable, which is worse than deterministic: it works in development and breaks at the least convenient time. `docs/architecture.md` (`Port allocation and locking`) already says a probe is not a reservation against unrelated programs.
 
-Suggested shape: an optional `endpoints.<alias>.host_port`, allocated before startup, failing loudly when unavailable instead of silently falling back to an ephemeral candidate. That preserves isolation (the port still belongs to one workspace) and gives the class of consumers above something to depend on.
+Suggested shape at the time: an optional `endpoints.<alias>.host_port`, allocated before startup, failing loudly when unavailable instead of silently falling back to an ephemeral candidate. The implemented policy is broader: `stable_ports` covers every publication, uses Compose as an initial seed rather than a declaration, and keeps `.env` out of the contract.
 
 ### 2.4 Native bindings cannot drive allocation
 
@@ -177,7 +180,7 @@ Ordered by services unblocked per unit of design risk, not by implementation cos
 | ~~2~~ | ~~Socket-mount opt-in with a dedicated error (§1.2)~~ | Resolved: `docker_socket_services` | |
 | ~~3~~ | ~~`unregister`/`forget` + sweep (§3.2, §3.3)~~ | Resolved: `trocker release` + `init` sweep | |
 | ~~4~~ | ~~Digest-based non-interactive `init` (§3.1)~~ | Resolved: `init --dry-run` + `init --confirm <digest>` | |
-| 5 | Declarable host port (§2.1–§2.3) | OAuth/OIDC, CORS, WebAuthn, webhooks | Still one owner per port; fail, never fall back |
+| ~~5~~ | ~~Declarable host port (§2.1–§2.3)~~ | Resolved: `stable_ports` + `trocker ports` | One owner per port; fail, never fall back |
 | ~~6~~ | ~~`ps --json` / `logs` / `exec` (§3.4, §3.5)~~ | Resolved: test and debugging recipes address services, not container names | No allocation or workspace mutation locks |
 | 7 | Deny-list completeness test (§4) | Confidence in the isolation claim | None — it is a test |
 | 8 | `deploy` subkey granularity, explicit-name rejection wording (§1.4, §1.5) | Projects with ordinary Compose hygiene | None |

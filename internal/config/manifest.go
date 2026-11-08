@@ -22,6 +22,7 @@ type Manifest struct {
 	BuildContexts        []string                   `yaml:"build_contexts"`
 	DockerSocketServices []string                   `yaml:"docker_socket_services"`
 	HostAccess           map[string]HostAccessGrant `yaml:"host_access"`
+	StablePorts          bool                       `yaml:"stable_ports"`
 	Endpoints            map[string]Endpoint        `yaml:"endpoints"`
 	Bindings             map[string]Bindings        `yaml:"bindings"`
 	Directory            string                     `yaml:"-"`
