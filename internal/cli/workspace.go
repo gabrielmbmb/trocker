@@ -38,6 +38,9 @@ func newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := enterEnvironment(command); err != nil {
+				return err
+			}
 			directory, store, err := queryLocation()
 			if err != nil {
 				return err
@@ -61,6 +64,9 @@ func newEndpointsCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			profiles, err := profileSelection(command)
 			if err != nil {
+				return err
+			}
+			if err := enterEnvironment(command); err != nil {
 				return err
 			}
 			directory, store, err := queryLocation()
@@ -164,6 +170,9 @@ func writeEndpoints(out io.Writer, result lifecycle.EndpointResult) error {
 func runPlan(command *cobra.Command, _ []string) error {
 	profiles, err := profileSelection(command)
 	if err != nil {
+		return err
+	}
+	if err := enterEnvironment(command); err != nil {
 		return err
 	}
 	directory, store, err := queryLocation()

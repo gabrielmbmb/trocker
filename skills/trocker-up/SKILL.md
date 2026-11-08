@@ -26,6 +26,7 @@ The project already has Trocker configured. Use its existing `trocker.yaml`; do 
 
 ## Safeguards
 
+- If a command reports that the environment wrapper is not approved, do not approve it yourself. Show the user `trocker init --dry-run` and confirm only the digest they approve.
 - Use Trocker, not direct Compose commands, to manage this stack.
 - Do not modify Compose files, application settings, or `trocker.yaml` to bypass startup errors. Report configuration, ownership, registration, or unsupported-feature blockers.
 - If `up` fails because a stable host port is in use, report it. `trocker ports reassign SERVICE:PORT` moves the assignment once the service is stopped, but it changes an address other tools may rely on, so ask before running it.

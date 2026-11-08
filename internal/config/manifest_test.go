@@ -146,6 +146,7 @@ version: 1
 compose: [base.yaml, override.yaml]
 stable_ports: true
 stable_port_range: 30000-32767
+environment_wrapper: [scripts/env.sh, --config, dev]
 docker_socket_services: [localstack, dozzle]
 host_access:
   datadog-agent:
@@ -177,6 +178,7 @@ bindings:
 		Compose:              []string{"base.yaml", "override.yaml"},
 		StablePorts:          true,
 		StablePortRange:      "30000-32767",
+		EnvironmentWrapper:   []string{"scripts/env.sh", "--config", "dev"},
 		DockerSocketServices: []string{"localstack", "dozzle"},
 		HostAccess: map[string]config.HostAccessGrant{"datadog-agent": {
 			PID: true, IPC: true, Capabilities: []string{"SYS_PTRACE"},
@@ -437,6 +439,46 @@ func TestDecodeErrorHasSafeLocation(t *testing.T) {
 	_, err := config.Parse([]byte(base + "bindings: {web: {environment: {TOKEN: [do-not-print]}}}"))
 	if err == nil || !strings.Contains(err.Error(), "line 3") || strings.Contains(err.Error(), "do-not-print") {
 		t.Fatalf("unexpected diagnostic: %v", err)
+	}
+}
+
+func TestLoadConfinesEnvironmentWrapper(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	for _, test := range []struct {
+		name   string
+		script string
+		valid  bool
+	}{
+		{name: "inside the checkout", script: "scripts/env.sh", valid: true},
+		{name: "parent", script: "../env.sh"},
+		{name: "absolute", script: filepath.Join(directory, "env.sh")},
+		{name: "home", script: "~/env.sh"},
+		{name: "empty", script: "''"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(directory, test.name+".yaml")
+			content := "version: 1\ncompose: [compose.yaml]\nenvironment_wrapper: [" + test.script + ", --flag]\n"
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := config.Load(path)
+			if !test.valid {
+				var validation *config.Error
+				if !errors.As(err, &validation) || validation.Field != "environment_wrapper[0]" {
+					t.Fatalf("error = %v, want environment_wrapper[0]", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The declared command stays relative: its fingerprint must be the same in every worktree.
+			if !slices.Equal(manifest.EnvironmentWrapper, []string{"scripts/env.sh", "--flag"}) || manifest.EnvironmentWrapperPath() != filepath.Join(directory, "scripts", "env.sh") {
+				t.Fatalf("wrapper = %v at %s", manifest.EnvironmentWrapper, manifest.EnvironmentWrapperPath())
+			}
+		})
 	}
 }
 

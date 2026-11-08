@@ -178,3 +178,27 @@ func TestInitDigestApprovalCoversAnotherWorktree(t *testing.T) {
 		t.Fatalf("declined registration was written: %+v %v", registry, err)
 	}
 }
+
+// Compose is not validated before an unapproved environment wrapper has run,
+// so registering in that state would skip validation the user never saw.
+func TestInitDoesNotRegisterBeforeTheWrapperRuns(t *testing.T) {
+	directory, main := repository(t)
+	store := state.Store{Directory: filepath.Join(directory, "state")}
+	for name, content := range map[string]string{
+		"compose.yaml": "services:\n  api:\n    image: busybox\n    environment: {VALUE: '${FROM_WRAPPER:?}'}\n",
+		"trocker.yaml": "version: 1\ncompose: [compose.yaml]\nenvironment_wrapper: [env.sh]\n",
+		"env.sh":       "#!/bin/sh\nFROM_WRAPPER=yes exec \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(main, name), []byte(content), 0o700); err != nil { //nolint:gosec // The wrapper must be executable.
+			t.Fatal(err)
+		}
+	}
+	proposal, err := lifecycle.PrepareInit(t.Context(), main, store)
+	if err != nil || !proposal.ComposeDeferred || proposal.WrapperApproved {
+		t.Fatalf("proposal = %+v, %v", proposal, err)
+	}
+	if _, err := lifecycle.Init(t.Context(), main, store, func(lifecycle.InitProposal) (bool, error) { return true, nil }); err == nil {
+		t.Fatal("init registered a workspace whose Compose files were never validated")
+	}
+	assertAbsent(t, store.Directory)
+}

@@ -25,6 +25,7 @@ type Manifest struct {
 	HostAccess           map[string]HostAccessGrant `yaml:"host_access"`
 	StablePorts          bool                       `yaml:"stable_ports"`
 	StablePortRange      string                     `yaml:"stable_port_range"`
+	EnvironmentWrapper   []string                   `yaml:"environment_wrapper"`
 	Endpoints            map[string]Endpoint        `yaml:"endpoints"`
 	Bindings             map[string]Bindings        `yaml:"bindings"`
 	Directory            string                     `yaml:"-"`
@@ -142,7 +143,19 @@ func Load(path string) (*Manifest, error) {
 	if manifest.SharedWritePaths, err = manifest.resolveSharedWritePaths(); err != nil {
 		return nil, err
 	}
+	if len(manifest.EnvironmentWrapper) > 0 && !Inside(manifest.Directory, manifest.EnvironmentWrapperPath()) {
+		return nil, invalid("environment_wrapper[0]", "expected a script inside the manifest directory")
+	}
 	return manifest, nil
+}
+
+// EnvironmentWrapperPath returns the wrapper script's absolute path. The
+// declared command stays relative, so it reads the same in every worktree.
+func (m *Manifest) EnvironmentWrapperPath() string {
+	if len(m.EnvironmentWrapper) == 0 {
+		return ""
+	}
+	return filepath.Join(m.Directory, filepath.Clean(m.EnvironmentWrapper[0]))
 }
 
 // resolveCheckoutPaths makes declared host paths absolute but never lets them
@@ -312,6 +325,12 @@ func (m *Manifest) Validate() error {
 	}
 	if err := m.validateStablePortRange(); err != nil {
 		return err
+	}
+	if len(m.EnvironmentWrapper) > 0 {
+		script := m.EnvironmentWrapper[0]
+		if strings.TrimSpace(script) == "" || filepath.IsAbs(script) || strings.HasPrefix(script, "~") {
+			return invalid("environment_wrapper[0]", "expected a script path relative to the manifest directory")
+		}
 	}
 	for name, endpoint := range m.Endpoints {
 		if !aliasPattern.MatchString(name) {

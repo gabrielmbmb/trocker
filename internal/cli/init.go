@@ -81,8 +81,18 @@ func runInit(command *cobra.Command, _ []string) error {
 	}
 	store := state.Store{Directory: stateDirectory}
 
+	wrapper, err := lifecycle.LoadEnvironmentWrapper(command.Context(), directory, store)
+	if err != nil {
+		return err
+	}
+	if wrapper != nil && !wrapper.Active() && wrapper.Approved {
+		return execInWrapper(wrapper, arguments(command.Context()))
+	}
 	if dryRun {
 		return reportInitProposal(command, directory, store)
+	}
+	if wrapper != nil && !wrapper.Active() {
+		return confirmBeforeWrapper(command, directory, store, wrapper, digest)
 	}
 
 	result, err := lifecycle.Init(command.Context(), directory, store, func(proposal lifecycle.InitProposal) (bool, error) {
@@ -102,6 +112,33 @@ func runInit(command *cobra.Command, _ []string) error {
 	}
 	_, err = fmt.Fprintf(command.OutOrStdout(), "Workspace registered\n\n  Config     trocker.yaml\n  Workspace  %s\n\nNo containers were started.\n", result.ID)
 	return err
+}
+
+// confirmBeforeWrapper asks for approval before an unapproved wrapper has ever
+// run, then runs init inside it with the approved digest. That inner init
+// validates Compose with the wrapper's environment and registers only if the
+// proposal still matches.
+func confirmBeforeWrapper(command *cobra.Command, directory string, store state.Store, wrapper *lifecycle.EnvironmentWrapper, digest string) error {
+	proposal, err := lifecycle.PrepareInit(command.Context(), directory, store)
+	if err != nil {
+		return err
+	}
+	if digest != "" && proposal.Digest != digest {
+		return digestError{}
+	}
+	if digest == "" {
+		if err := writeInitProposal(command.ErrOrStderr(), proposal, true); err != nil {
+			return err
+		}
+		accepted, err := confirmLine(command.Context(), command.InOrStdin())
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return lifecycle.ErrDeclined
+		}
+	}
+	return execInWrapper(wrapper, []string{"init", "--confirm", proposal.Digest})
 }
 
 // reportInitProposal shows what registration would change without writing it.
@@ -135,11 +172,21 @@ func writeInitProposal(out io.Writer, proposal lifecycle.InitProposal, prompt bo
 	if proposal.Moved {
 		message.WriteString("  Location   update registered checkout path\n")
 	}
+	if len(proposal.EnvironmentWrapper) > 0 {
+		approval := "approved"
+		if !proposal.WrapperApproved {
+			approval = "new or changed; runs only after you confirm"
+		}
+		fmt.Fprintf(&message, "  Wrapper    %s (%s)\n", strings.Join(proposal.EnvironmentWrapper, " "), approval)
+	}
 	if creating {
 		message.WriteString("\nProposed trocker.yaml\n\n")
 		for line := range strings.SplitSeq(strings.TrimSuffix(string(proposal.Manifest), "\n"), "\n") {
 			fmt.Fprintf(&message, "  %s\n", line)
 		}
+	}
+	if proposal.ComposeDeferred {
+		message.WriteString("\nThe wrapper runs before Compose loads, so Compose is validated after confirmation.\n")
 	}
 	if prompt {
 		if creating {

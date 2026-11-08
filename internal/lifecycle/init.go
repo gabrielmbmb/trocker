@@ -35,6 +35,14 @@ type InitProposal struct {
 	Manifest []byte
 	// Digest identifies the decisions this proposal asks the user to approve.
 	Digest string
+	// EnvironmentWrapper is the declared environment_wrapper command, which
+	// WrapperFingerprint identifies together with the script's content.
+	EnvironmentWrapper []string
+	WrapperFingerprint string
+	WrapperApproved    bool
+	// ComposeDeferred means an unapproved wrapper has not run, so Compose is
+	// validated only after confirmation, by init running inside the wrapper.
+	ComposeDeferred bool
 }
 
 var ErrDeclined = errors.New("initialization not confirmed; nothing written")
@@ -43,7 +51,8 @@ var ErrDeclined = errors.New("initialization not confirmed; nothing written")
 const initDigestVersion = "trocker-init-1"
 
 // digest covers what a registration approval actually decides: the effective
-// manifest, the Docker target, and whether a moved checkout is relinked. The
+// manifest, the environment wrapper that may run, the Docker target, and
+// whether a moved checkout is relinked. The
 // checkout path and the workspace identity are deliberately excluded, so an
 // approval of a configuration applies to every worktree that uses it. Editing
 // the manifest or switching daemons changes the digest and needs a new approval.
@@ -65,6 +74,10 @@ func (p InitProposal) digest(manifest []byte, creating bool) string {
 	write(p.TargetHost)
 	if p.Moved {
 		write("moved")
+	}
+	if p.WrapperFingerprint != "" {
+		write("wrapper")
+		write(p.WrapperFingerprint)
 	}
 	sum := sha256.Sum256([]byte(canonical.String()))
 	return hex.EncodeToString(sum[:])
@@ -94,6 +107,9 @@ func Init(ctx context.Context, directory string, store state.Store, confirm func
 	if !accepted {
 		return workspace.Registration{}, ErrDeclined
 	}
+	if prepared.proposal.ComposeDeferred {
+		return workspace.Registration{}, &deferredComposeError{command: prepared.proposal.EnvironmentWrapper}
+	}
 	return applyInit(ctx, store, prepared)
 }
 
@@ -107,7 +123,7 @@ func prepareInit(ctx context.Context, directory string, store state.Store) (prep
 	if err != nil {
 		return prepared, err
 	}
-	original, proposed, err := prepareInitManifest(ctx, checkout.Root)
+	original, proposed, wrapper, err := prepareInitManifest(ctx, checkout.Root)
 	if err != nil {
 		return prepared, err
 	}
@@ -133,6 +149,12 @@ func prepareInit(ctx context.Context, directory string, store state.Store) (prep
 		Checkout: checkout, TargetID: target.ID, TargetHost: target.Host,
 		Moved: moved, NewTarget: true, Manifest: proposed,
 	}
+	if wrapper != nil {
+		proposal.EnvironmentWrapper = wrapper.Command
+		proposal.WrapperFingerprint = wrapper.Fingerprint
+		proposal.WrapperApproved = registry.WrapperApproved(wrapper.Fingerprint)
+		proposal.ComposeDeferred = !wrapper.Active()
+	}
 	proposal.Digest = proposal.digest(effective, creating)
 	if index >= 0 {
 		existing := registry.Workspaces[index]
@@ -144,26 +166,20 @@ func prepareInit(ctx context.Context, directory string, store state.Store) (prep
 
 // A non-nil proposal means the manifest was absent. Existing configuration is
 // validated and retained verbatim for the post-confirmation comparison.
-func prepareInitManifest(ctx context.Context, root string) (original, proposed []byte, err error) {
+func prepareInitManifest(ctx context.Context, root string) (original, proposed []byte, wrapper *EnvironmentWrapper, err error) {
 	path := filepath.Join(root, "trocker.yaml")
 	original, err = os.ReadFile(path) //nolint:gosec // Manifest path is within the discovered checkout.
 	if err == nil {
-		manifest, _, err := compose.Load(ctx, path, nil)
-		if err == nil {
-			err = checkStablePortRange(manifest, ephemeralPortRange())
-		}
-		if err == nil {
-			_, err = generated.Validate(ctx, manifest)
-		}
-		return original, nil, err
+		wrapper, err = validateInitManifest(ctx, path)
+		return original, nil, wrapper, err
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	project, err := compose.DiscoverFiles(ctx, root)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	manifest := config.Manifest{Version: 1}
 	for _, file := range project.ComposeFiles {
@@ -174,10 +190,34 @@ func prepareInitManifest(ctx context.Context, root string) (original, proposed [
 		manifest.Compose = append(manifest.Compose, relative)
 	}
 	if err := manifest.Validate(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	proposed, err = yaml.Dump(manifest)
-	return nil, proposed, err
+	return nil, proposed, nil, err
+}
+
+// validateInitManifest checks an existing manifest. Compose interpolation may
+// need the environment wrapper's output, and an unapproved wrapper must not
+// run, so Compose is loaded only without a wrapper or inside it.
+func validateInitManifest(ctx context.Context, path string) (*EnvironmentWrapper, error) {
+	manifest, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	wrapper, err := resolveEnvironmentWrapper(manifest)
+	if err != nil {
+		return nil, err
+	}
+	if wrapper == nil || wrapper.Active() {
+		if _, _, err := compose.Load(ctx, path, nil); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkStablePortRange(manifest, ephemeralPortRange()); err != nil {
+		return nil, err
+	}
+	_, err = generated.Validate(ctx, manifest)
+	return wrapper, err
 }
 
 func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (registration workspace.Registration, err error) {
@@ -208,6 +248,13 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 	if err := applyInitManifest(prepared); err != nil {
 		return registration, err
 	}
+	manifest, err := config.Load(filepath.Join(proposal.Checkout.Root, "trocker.yaml"))
+	if err != nil {
+		return registration, err
+	}
+	if err := approveInitWrapper(ctx, store, manifest, proposal.WrapperFingerprint); err != nil {
+		return registration, err
+	}
 	registration, err = registerLocked(ctx, store, proposal.Checkout, proposal.TargetID)
 	if err != nil {
 		return registration, err
@@ -215,10 +262,6 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 	// Stable assignments are metadata, not containers. Creating them here makes
 	// the values available before the first startup and gives external consumers
 	// a chance to be configured first.
-	manifest, err := config.Load(filepath.Join(proposal.Checkout.Root, "trocker.yaml"))
-	if err != nil {
-		return registration, err
-	}
 	if manifest.StablePorts {
 		planned, err := preparePlan(ctx, proposal.Checkout.Root, store, nil, nil)
 		if err != nil {
@@ -229,6 +272,19 @@ func applyInit(ctx context.Context, store state.Store, prepared preparedInit) (r
 		}
 	}
 	return registration, nil
+}
+
+// approveInitWrapper records the confirmed wrapper, after checking that the
+// script did not change since the proposal it was confirmed with.
+func approveInitWrapper(ctx context.Context, store state.Store, manifest *config.Manifest, approved string) error {
+	wrapper, err := resolveEnvironmentWrapper(manifest)
+	if err != nil || wrapper == nil {
+		return err
+	}
+	if wrapper.Fingerprint != approved {
+		return fmt.Errorf("environment wrapper changed during confirmation; retry init")
+	}
+	return store.ApproveWrapper(ctx, wrapper.Fingerprint)
 }
 
 // Recheck under the workspace lock before any manifest/registry writes. Prompts

@@ -222,6 +222,22 @@ trocker run web -- pnpm dev
 
 The child uses your current directory and inherited environment plus native bindings—not Compose environment values. Standard streams and exit codes pass through, and arguments are passed without shell expansion. Native execution supports Linux/macOS, runs with your normal permissions, and does not allocate the application's own listening port.
 
+### Provide environment from a secret manager
+
+When Compose interpolation needs values Trocker cannot read from the checkout, such as secrets from a secret manager or a version kept in a file, declare a wrapper script instead of wrapping every Trocker command yourself:
+
+```yaml
+environment_wrapper: [scripts/trocker-env]
+```
+
+```sh
+#!/bin/sh
+export DD_AGENT_VERSION="$(cat datadog-agent.version)"
+exec doppler run -- "$@"
+```
+
+Commands that load Compose (`init`, `plan`, `doctor`, `up`, `run`, `status`, `endpoints`) run again inside the wrapper, which receives the Trocker command as its arguments and must run it with the environment it adds. The wrapper is repository code, so it runs only after `init` approves it: its fingerprint, the declared command plus the script's content, is part of the init digest, and one approval covers every worktree with the same wrapper. Editing the script withdraws the approval until `init` approves the new version; files the script reads are not covered. Before approval, `init` cannot load Compose, so it validates Compose inside the wrapper after you confirm. Not supported on Windows.
+
 ### Generate configuration files
 
 For applications that read files rather than environment variables, declare templates under `bindings.<service>.files` for containers or `bindings.<service>.native.files` for local processes. Trocker renders private immutable files and exposes their paths through bindings; container delivery is read-only.

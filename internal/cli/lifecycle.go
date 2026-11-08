@@ -38,6 +38,9 @@ func newUpCommand() *cobra.Command {
 			if build && noBuild {
 				return fmt.Errorf("%w: --build cannot be combined with --no-build", ErrUsage)
 			}
+			if err := enterEnvironment(command); err != nil {
+				return err
+			}
 			result, err := lifecycle.Up(command.Context(), directory, store, compose.UpOptions{Services: services, Profiles: profiles, Detach: detach, Build: build, NoBuild: noBuild}, command.ErrOrStderr())
 			if err != nil {
 				return err

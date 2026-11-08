@@ -25,6 +25,7 @@ func TestInitDigestCoversApprovedDecisions(t *testing.T) {
 		{"different engine", manifest, false, InitProposal{TargetID: "target-b", TargetHost: "unix:///docker.sock"}},
 		{"different host", manifest, false, InitProposal{TargetID: "target-a", TargetHost: "unix:///other.sock"}},
 		{"relocated checkout", manifest, false, InitProposal{TargetID: "target-a", TargetHost: "unix:///docker.sock", Moved: true}},
+		{"environment wrapper", manifest, false, InitProposal{TargetID: "target-a", TargetHost: "unix:///docker.sock", WrapperFingerprint: "abc"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

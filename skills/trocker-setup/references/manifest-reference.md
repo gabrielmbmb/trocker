@@ -19,7 +19,7 @@ endpoints: {}
 bindings: {}
 ```
 
-`profiles`, `stable_ports`, `stable_port_range`, `read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
+`profiles`, `environment_wrapper`, `stable_ports`, `stable_port_range`, `read_write_paths`, `shared_write_paths`, `build_contexts`, `docker_socket_services`, `host_access`, `endpoints`, and `bindings` are optional. Empty values are valid and are what `trocker init` normally generates before application-specific configuration is added.
 
 A typical configured manifest:
 
@@ -77,6 +77,27 @@ profiles:
 - An explicit profile that no Compose service declares is reported with the profiles that are available.
 - `--profile` on `plan`, `doctor`, `up`, `run`, `status`, or `endpoints` overrides the manifest for that command. `plan` and `doctor` report the active profiles and service count.
 - Commands that operate on existing resources (`start`, `stop`, `down`, `release`, `ls`, `ps`, `logs`, `exec`) do not load Compose and do not take a profile selection.
+
+### `environment_wrapper`
+
+Optional command that runs Compose-loading commands inside an environment the checkout cannot provide on its own, such as a secret manager's variables or a value read from a file.
+
+```yaml
+environment_wrapper: [scripts/trocker-env]
+```
+
+```sh
+#!/bin/sh
+export DD_AGENT_VERSION="$(cat datadog-agent.version)"
+exec doppler run -- "$@"
+```
+
+- The first element is an executable script inside the manifest directory, declared relative to it. Further elements are passed to it.
+- The script receives the Trocker executable and its arguments, must run them with the environment it adds, and must preserve the environment it was given.
+- `init`, `plan`, `doctor`, `up`, `run`, `status`, and `endpoints` run inside it. Commands on existing resources do not.
+- It runs only once `init` approves it. Its fingerprint, the declared command plus the script content, is part of the init digest, and one approval covers every worktree with the same wrapper. Editing the script withdraws the approval; files it reads are not covered, so keep the logic in the script.
+- Before approval, `init --dry-run` proposes without loading Compose, and the confirmed init validates Compose inside the wrapper.
+- Not supported on Windows.
 
 ### `stable_ports`
 

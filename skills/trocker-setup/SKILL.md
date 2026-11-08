@@ -22,6 +22,7 @@ Turn the current Git worktree into a usable Trocker workspace:
 - Never add a `read_write_paths` entry without explicit confirmation. Each entry lets containers modify that path on the host, so show the service, host path, and container path before asking.
 - Never add a service to `docker_socket_services` without explicit confirmation. It grants control of the Docker daemon, including containers and images outside this workspace, so show the service and socket path before asking.
 - Never add a `host_access` grant without explicit confirmation. It exposes host process state, host capabilities, or devices and is not workspace-isolated. Show the exact Compose declaration and matching grant before asking.
+- Never add an `environment_wrapper` without explicit confirmation. Trocker runs that script before every Compose-loading command, so show the script and what it exports before asking. Never approve it on the user's behalf: its approval is part of the init digest.
 - Never print `.env` values, Compose environment values, secrets, generated files, or full resolved Compose configuration. List keys or use targeted queries only.
 - Do not run `trocker up`, `start`, `stop`, `down`, or `run` unless the user explicitly asks for a runtime test. `init`, `plan`, and `doctor` are the normal setup checks.
 - Do not confirm registration on the user's behalf. With a terminal, run `trocker init` and let them answer the prompt. Without one, run `trocker init --dry-run`, show them the proposal and its digest, and pass that exact digest to `trocker init --confirm` only after they approve it. Never pipe `y`, pick a digest yourself, hand-write registration state, or edit Trocker's registry.
@@ -68,6 +69,7 @@ trocker init --confirm <digest> # registers only while that proposal still match
 
 The digest covers the effective manifest, the Docker target, whether the manifest would be created, and whether a moved checkout would be relinked. It excludes the checkout path and the workspace identity, so one approved digest registers any number of worktrees that share that configuration; editing the manifest or switching daemons requires a new approval.
 
+- If init fails with `cannot load Compose configuration` because interpolation variables come from a secret manager or a project wrapper (for example `doppler run`, or a variable a `justfile` exports), propose an [`environment_wrapper`](references/manifest-reference.md#environment_wrapper) script that provides them, and ask before adding it. Do not export the variables yourself to get past init.
 - If init cannot find a Compose file, do not hand-write `trocker.yaml`. First locate the intended top-level file(s) using [Compose analysis](references/compose-analysis.md), then rerun init with an explicit selection, for example:
   ```sh
   COMPOSE_FILE=deploy/compose.yaml:deploy/compose.override.yaml trocker init

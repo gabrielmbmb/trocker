@@ -25,6 +25,9 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := enterEnvironment(command); err != nil {
+				return err
+			}
 			directory, store, err := queryLocation()
 			if err != nil {
 				return err

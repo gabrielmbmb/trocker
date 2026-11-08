@@ -25,7 +25,7 @@ func RunContext(ctx context.Context, args []string, version string, input io.Rea
 	command.SetIn(input)
 	command.SetErr(diagnostics)
 
-	err := command.ExecuteContext(ctx)
+	err := command.ExecuteContext(context.WithValue(ctx, argumentsKey{}, args))
 	if writer.err != nil {
 		return fmt.Errorf("write command output: %w", writer.err)
 	}
