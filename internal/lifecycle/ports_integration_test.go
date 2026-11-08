@@ -29,6 +29,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
+	"github.com/gabrielmbmb/trocker/internal/config"
 	"github.com/gabrielmbmb/trocker/internal/lifecycle"
 	"github.com/gabrielmbmb/trocker/internal/state"
 	"github.com/gabrielmbmb/trocker/internal/workspace"
@@ -475,7 +476,8 @@ func stableWorkspace(t *testing.T, ctx context.Context) (string, state.Store, wo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(assigned.Ports) != 1 || assigned.Ports[0].Service != "api" || assigned.Ports[0].ContainerPort != 8000 || assigned.Ports[0].HostPort == 0 {
+	// Compose declares no host port, so the assignment must come from the stable range, not the OS.
+	if len(assigned.Ports) != 1 || assigned.Ports[0].Service != "api" || assigned.Ports[0].ContainerPort != 8000 || !config.DefaultStablePortRange.Contains(assigned.Ports[0].HostPort) {
 		t.Fatalf("init assignments = %+v", assigned)
 	}
 	return main, store, registration, target, assigned.Ports[0].HostPort

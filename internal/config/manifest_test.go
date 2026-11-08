@@ -61,6 +61,11 @@ func TestManifestValidation(t *testing.T) {
 		{"missing device permissions", base + "host_access: {api: {devices: [{source: /dev/kmsg, permissions: ''}]}}", "host_access.api.devices[0].permissions"},
 		{"invalid device permissions", base + "host_access: {api: {devices: [{source: /dev/kmsg, permissions: rwx}]}}", "host_access.api.devices[0].permissions"},
 		{"duplicate device", base + "host_access: {api: {devices: [{source: /dev/kmsg, permissions: rw}, {source: /dev/kmsg, permissions: rwm}]}}", "host_access.api.devices"},
+		{"port range without stable ports", base + "stable_port_range: 30000-32767", "stable_port_range"},
+		{"port range without a separator", base + "stable_ports: true\nstable_port_range: 30000", "stable_port_range"},
+		{"port range above 65535", base + "stable_ports: true\nstable_port_range: 30000-65536", "stable_port_range"},
+		{"port range below 1024", base + "stable_ports: true\nstable_port_range: 1023-2000", "stable_port_range"},
+		{"reversed port range", base + "stable_ports: true\nstable_port_range: 32767-30000", "stable_port_range"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -140,6 +145,7 @@ func TestParsePreservesExplicitConfiguration(t *testing.T) {
 version: 1
 compose: [base.yaml, override.yaml]
 stable_ports: true
+stable_port_range: 30000-32767
 docker_socket_services: [localstack, dozzle]
 host_access:
   datadog-agent:
@@ -170,6 +176,7 @@ bindings:
 		Version:              1,
 		Compose:              []string{"base.yaml", "override.yaml"},
 		StablePorts:          true,
+		StablePortRange:      "30000-32767",
 		DockerSocketServices: []string{"localstack", "dozzle"},
 		HostAccess: map[string]config.HostAccessGrant{"datadog-agent": {
 			PID: true, IPC: true, Capabilities: []string{"SYS_PTRACE"},
@@ -183,6 +190,25 @@ bindings:
 	}
 	if !reflect.DeepEqual(manifest, want) {
 		t.Fatal("parsing changed file order, endpoint settings, or explicit container/native bindings")
+	}
+}
+
+func TestStablePortPool(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		declared string
+		want     config.PortRange
+	}{
+		{want: config.DefaultStablePortRange},
+		{declared: "stable_port_range: 1024-65535\n", want: config.PortRange{First: 1024, Last: 65535}},
+	} {
+		manifest, err := config.Parse([]byte(base + "stable_ports: true\n" + test.declared))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := manifest.StablePortPool(); got != test.want {
+			t.Errorf("StablePortPool with %q = %v, want %v", test.declared, got, test.want)
+		}
 	}
 }
 

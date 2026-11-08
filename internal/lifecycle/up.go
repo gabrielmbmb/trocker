@@ -44,6 +44,9 @@ func preparePlanFor(ctx context.Context, registration workspace.Registration, se
 	if err != nil {
 		return PlanResult{}, err
 	}
+	if err := checkStablePortRange(manifest, ephemeralPortRange()); err != nil {
+		return PlanResult{}, err
+	}
 	project, err := plan.Build(manifest, source, registration, plan.Options{Services: services, Ports: ports, Preview: true})
 	if err != nil {
 		return PlanResult{}, err

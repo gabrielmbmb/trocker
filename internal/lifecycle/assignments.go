@@ -75,9 +75,8 @@ func assignMissingStablePorts(ctx context.Context, store state.Store, prepared P
 		return nil, err
 	}
 	mapping = assignmentMap(registry, prepared.Registration.ID, target.ID)
-	publications := plan.Publications(prepared.manifest, prepared.Project)
 	missing := make([]plan.PortKey, 0)
-	for _, key := range publications {
+	for _, key := range plan.Publications(prepared.manifest, prepared.Project) {
 		if mapping[key] == 0 {
 			missing = append(missing, key)
 		}
@@ -85,57 +84,55 @@ func assignMissingStablePorts(ctx context.Context, store state.Store, prepared P
 	if len(missing) == 0 {
 		return mapping, nil
 	}
-
-	current, err := observedPorts(ctx, target, prepared.Registration, missing)
+	seeds, err := stableSeeds(ctx, target, prepared, registry, missing)
 	if err != nil {
 		return nil, err
 	}
-	preferences := make(map[plan.PortKey]uint16)
-	for _, preference := range registry.Ports {
-		if preference.WorkspaceID == prepared.Registration.ID && preference.TargetID == target.ID {
-			preferences[plan.PortKey{Service: preference.Service, Port: preference.ContainerPort}] = preference.HostPort
-		}
+	claims := newPortClaims(store, registry)
+	defer func() { err = errors.Join(err, claims.Close()) }()
+	assigned, err := claims.assign(ctx, missing, seeds, prepared.manifest.StablePortPool())
+	if err != nil {
+		return nil, err
 	}
-	used := make(map[uint16]bool)
-	for _, assignment := range registry.Assignments {
-		used[assignment.HostPort] = true
-	}
-	var leases []*flock.Flock
-	defer func() {
-		for _, lease := range leases {
-			err = errors.Join(err, lease.Close())
-		}
-	}()
-	created := make([]state.PortAssignment, 0, len(missing))
+	created := make([]state.PortAssignment, 0, len(assigned))
 	for _, key := range missing {
-		composePort, _ := plan.ComposeHostPort(prepared.source, key)
-		for {
-			hostPort, err := chooseStablePort(ctx, used, current[key], preferences[key], composePort)
-			if err != nil {
-				return nil, err
-			}
-			lease, acquired, err := store.TryClaimPort(ctx, hostPort)
-			if err != nil {
-				return nil, err
-			}
-			if !acquired {
-				used[hostPort] = true
-				continue
-			}
-			leases = append(leases, lease)
-			used[hostPort] = true
-			mapping[key] = hostPort
-			created = append(created, state.PortAssignment{
-				WorkspaceID: prepared.Registration.ID, TargetID: target.ID,
-				Service: key.Service, ContainerPort: key.Port, HostPort: hostPort,
-			})
-			break
-		}
+		mapping[key] = assigned[key]
+		created = append(created, state.PortAssignment{
+			WorkspaceID: prepared.Registration.ID, TargetID: target.ID,
+			Service: key.Service, ContainerPort: key.Port, HostPort: assigned[key],
+		})
 	}
 	if err := store.AssignPorts(ctx, created); err != nil {
 		return nil, err
 	}
 	return mapping, nil
+}
+
+// stableSeed lists the ports a new assignment tries before the stable range:
+// the port its running container already publishes, a remembered preference,
+// and the host port Compose declares.
+type stableSeed struct {
+	current, preference, compose uint16
+}
+
+func stableSeeds(ctx context.Context, target *compose.Target, prepared PlanResult, registry state.Registry, keys []plan.PortKey) (map[plan.PortKey]stableSeed, error) {
+	current, err := observedPorts(ctx, target, prepared.Registration, keys)
+	if err != nil {
+		return nil, err
+	}
+	seeds := make(map[plan.PortKey]stableSeed, len(keys))
+	for _, key := range keys {
+		composePort, _ := plan.ComposeHostPort(prepared.source, key)
+		seeds[key] = stableSeed{current: current[key], compose: composePort}
+	}
+	for _, preference := range registry.Ports {
+		key := plan.PortKey{Service: preference.Service, Port: preference.ContainerPort}
+		if seed, ok := seeds[key]; ok && preference.WorkspaceID == prepared.Registration.ID && preference.TargetID == target.ID {
+			seed.preference = preference.HostPort
+			seeds[key] = seed
+		}
+	}
+	return seeds, nil
 }
 
 func observedPorts(ctx context.Context, target *compose.Target, registration workspace.Registration, keys []plan.PortKey) (map[plan.PortKey]uint16, error) {
@@ -160,49 +157,173 @@ func observedPorts(ctx context.Context, target *compose.Target, registration wor
 	return current, nil
 }
 
-func chooseStablePort(ctx context.Context, used map[uint16]bool, current, preference, composePort uint16) (uint16, error) {
-	for _, candidate := range []uint16{current, preference, composePort} {
-		if candidate == 0 || used[candidate] {
+// seedPort returns the first seed that is free to assign, or zero. Current and
+// remembered ports may have come from dynamic allocation, so one inside the
+// ephemeral range is not kept: it would stay exposed to other programs'
+// dynamic listeners. A Compose port is the project's explicit choice and is
+// kept wherever it is.
+func seedPort(seed stableSeed, used map[uint16]bool, ephemeral config.PortRange, available func(uint16) (bool, error)) (uint16, error) {
+	candidates := []struct {
+		port    uint16
+		dynamic bool
+	}{{seed.current, true}, {seed.preference, true}, {seed.compose, false}}
+	for _, candidate := range candidates {
+		if candidate.port == 0 || used[candidate.port] || candidate.dynamic && ephemeral.Contains(candidate.port) {
 			continue
 		}
-		if candidate == current {
-			return candidate, nil
+		// This workspace's own container holds its current port, so a probe would report it busy.
+		if candidate.port == seed.current {
+			return candidate.port, nil
 		}
-		available, err := portAvailable(ctx, candidate)
+		free, err := available(candidate.port)
 		if err != nil {
 			return 0, err
 		}
-		if available {
-			return candidate, nil
+		if free {
+			return candidate.port, nil
 		}
 	}
-	for range 32 {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		var listen net.ListenConfig
-		listener, err := listen.Listen(ctx, "tcp4", "127.0.0.1:0")
+	return 0, nil
+}
+
+// poolPorts returns count ports from pool that taken does not reject. It
+// prefers the first contiguous run, so one workspace's ports stay together,
+// and otherwise takes the first free ports. Nil means the pool has too few.
+func poolPorts(count int, pool config.PortRange, taken func(uint16) (bool, error)) ([]uint16, error) {
+	run := make([]uint16, 0, count)
+	free := make([]uint16, 0, count)
+	for candidate := int(pool.First); candidate <= int(pool.Last); candidate++ {
+		port := uint16(candidate) //nolint:gosec // The loop stays within a uint16 range.
+		busy, err := taken(port)
 		if err != nil {
-			return 0, fmt.Errorf("cannot assign a stable host port: %w", err)
+			return nil, err
 		}
-		address, ok := listener.Addr().(*net.TCPAddr)
-		closeErr := listener.Close()
-		if !ok || closeErr != nil {
-			return 0, errors.Join(fmt.Errorf("cannot inspect a stable host port candidate"), closeErr)
-		}
-		candidate := uint16(address.Port) //nolint:gosec // A bound TCP port is in 1..65535.
-		if used[candidate] {
+		if busy {
+			run = run[:0]
 			continue
 		}
-		available, err := portAvailable(ctx, candidate)
-		if err != nil {
-			return 0, err
+		run = append(run, port)
+		if len(free) < count {
+			free = append(free, port)
 		}
-		if available {
-			return candidate, nil
+		if len(run) == count {
+			return run, nil
 		}
 	}
-	return 0, fmt.Errorf("cannot assign a stable host port after 32 attempts")
+	if len(free) == count {
+		return free, nil
+	}
+	return nil, nil
+}
+
+// portClaims holds the leases one assignment pass wins until its assignments
+// are persisted, and remembers every port it tried so none is tried twice.
+type portClaims struct {
+	store  state.Store
+	used   map[uint16]bool
+	leases []*flock.Flock
+}
+
+func newPortClaims(store state.Store, registry state.Registry) *portClaims {
+	used := make(map[uint16]bool)
+	for _, assignment := range registry.Assignments {
+		used[assignment.HostPort] = true
+	}
+	return &portClaims{store: store, used: used}
+}
+
+func (c *portClaims) Close() (err error) {
+	for _, lease := range c.leases {
+		err = errors.Join(err, lease.Close())
+	}
+	return err
+}
+
+// claim leases port for this pass. A port another Trocker process is claiming
+// is reported as lost rather than waited for.
+func (c *portClaims) claim(ctx context.Context, port uint16) (bool, error) {
+	lease, acquired, err := c.store.TryClaimPort(ctx, port)
+	if err != nil {
+		return false, err
+	}
+	c.used[port] = true
+	if acquired {
+		c.leases = append(c.leases, lease)
+	}
+	return acquired, nil
+}
+
+// assign claims a port for every key: its first free seed, otherwise a port
+// from the stable range. It never asks the OS for a port, because the OS
+// picks from the ephemeral range where other programs' listeners come and go.
+func (c *portClaims) assign(ctx context.Context, keys []plan.PortKey, seeds map[plan.PortKey]stableSeed, pool config.PortRange) (map[plan.PortKey]uint16, error) {
+	available := func(port uint16) (bool, error) { return portAvailable(ctx, port) }
+	ephemeral := ephemeralPortRange()
+	assigned := make(map[plan.PortKey]uint16, len(keys))
+	unseeded := make([]plan.PortKey, 0, len(keys))
+	for _, key := range keys {
+		for {
+			port, err := seedPort(seeds[key], c.used, ephemeral, available)
+			if err != nil {
+				return nil, err
+			}
+			if port == 0 {
+				unseeded = append(unseeded, key)
+				break
+			}
+			won, err := c.claim(ctx, port)
+			if err != nil {
+				return nil, err
+			}
+			if won {
+				assigned[key] = port
+				break
+			}
+		}
+	}
+	taken := func(port uint16) (bool, error) {
+		if c.used[port] {
+			return true, nil
+		}
+		free, err := available(port)
+		return !free, err
+	}
+	for len(unseeded) > 0 {
+		ports, err := poolPorts(len(unseeded), pool, taken)
+		if err != nil {
+			return nil, err
+		}
+		if ports == nil {
+			return nil, &stablePortRangeError{pool: pool, needed: len(unseeded)}
+		}
+		claimed := 0
+		for _, port := range ports {
+			won, err := c.claim(ctx, port)
+			if err != nil {
+				return nil, err
+			}
+			if !won {
+				break
+			}
+			assigned[unseeded[claimed]] = port
+			claimed++
+		}
+		unseeded = unseeded[claimed:]
+	}
+	return assigned, nil
+}
+
+type stablePortRangeError struct {
+	pool   config.PortRange
+	needed int
+}
+
+func (e *stablePortRangeError) Error() string {
+	return fmt.Sprintf("stable port range %s has fewer than %d free ports", e.pool, e.needed)
+}
+
+func (*stablePortRangeError) Help() string {
+	return "widen stable_port_range in trocker.yaml, or release workspaces that are no longer used"
 }
 
 func portAvailable(ctx context.Context, port uint16) (bool, error) {

@@ -150,6 +150,9 @@ func prepareInitManifest(ctx context.Context, root string) (original, proposed [
 	if err == nil {
 		manifest, _, err := compose.Load(ctx, path, nil)
 		if err == nil {
+			err = checkStablePortRange(manifest, ephemeralPortRange())
+		}
+		if err == nil {
 			_, err = generated.Validate(ctx, manifest)
 		}
 		return original, nil, err

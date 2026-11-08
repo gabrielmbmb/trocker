@@ -222,7 +222,7 @@ Check every endpoint:
 
 When the scheme, listening port, or consumer is ambiguous, ask the user or omit the endpoint. A smaller valid manifest is better than an invented one.
 
-If host ports must be known before startup—OAuth redirect registrations, CORS allowlists, debugger attach configs, bookmarks, or external test targets—enable `stable_ports: true`. Trocker then assigns and persists one host port per publication. Do not maintain per-worktree host-port values in `.env` for Trocker: use `trocker ports --json` as the machine-readable mapping and endpoint bindings for URLs. Existing Compose-resolved values seed the first assignment, so migration does not immediately move a running stack. Stable ports survive `down`/`up` and fail on conflict rather than falling back.
+If host ports must be known before startup—OAuth redirect registrations, CORS allowlists, debugger attach configs, bookmarks, or external test targets—enable `stable_ports: true`. Trocker then assigns and persists one host port per publication. Do not maintain per-worktree host-port values in `.env` for Trocker: use `trocker ports --json` as the machine-readable mapping and endpoint bindings for URLs. Free Compose host ports seed the first assignment; the rest come from `stable_port_range` (default `20000-32767`), outside the OS ephemeral range. If another tool on the machine owns part of that range, such as a legacy per-worktree port scheme, declare a `stable_port_range` that avoids it. Stable ports survive `down`/`up` and fail on conflict rather than falling back.
 
 ## 6. Add bindings only when the application consumes them
 

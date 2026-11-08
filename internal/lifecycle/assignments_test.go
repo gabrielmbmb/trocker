@@ -2,21 +2,62 @@ package lifecycle
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
+	"github.com/gabrielmbmb/trocker/internal/config"
 	"github.com/gabrielmbmb/trocker/internal/plan"
 	"github.com/gabrielmbmb/trocker/internal/state"
 )
 
-func TestChooseStablePortPrefersCurrentAndAvoidsUsed(t *testing.T) {
-	used := map[uint16]bool{24002: true, 24003: true}
-	port, err := chooseStablePort(t.Context(), used, 24001, 24002, 24003)
-	if err != nil || port != 24001 {
-		t.Fatalf("current candidate = %d, %v", port, err)
+func TestSeedPort(t *testing.T) {
+	t.Parallel()
+	ephemeral := config.PortRange{First: 49152, Last: 65535}
+	busy := map[uint16]bool{8001: true, 50002: true}
+	available := func(port uint16) (bool, error) { return !busy[port], nil }
+	for _, test := range []struct {
+		name string
+		seed stableSeed
+		used map[uint16]bool
+		want uint16
+	}{
+		{name: "current port is kept without probing", seed: stableSeed{current: 8001, preference: 8002, compose: 8003}, want: 8001},
+		{name: "dynamic ports inside the ephemeral range move", seed: stableSeed{current: 50000, preference: 50001, compose: 8003}, want: 8003},
+		{name: "explicit Compose port inside the ephemeral range is kept", seed: stableSeed{current: 50000, compose: 50003}, want: 50003},
+		{name: "Compose port the container already publishes is kept", seed: stableSeed{current: 50002, compose: 50002}, want: 50002},
+		{name: "used and busy seeds leave the range to choose", seed: stableSeed{preference: 8002, compose: 8001}, used: map[uint16]bool{8002: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			port, err := seedPort(test.seed, test.used, ephemeral, available)
+			if err != nil || port != test.want {
+				t.Fatalf("seedPort = %d, %v; want %d", port, err, test.want)
+			}
+		})
 	}
-	port, err = chooseStablePort(t.Context(), used, 0, 24002, 24003)
-	if err != nil || port == 0 || used[port] {
-		t.Fatalf("free candidate = %d, %v", port, err)
+}
+
+func TestPoolPorts(t *testing.T) {
+	t.Parallel()
+	pool := config.PortRange{First: 20000, Last: 20005}
+	for _, test := range []struct {
+		name  string
+		taken []uint16
+		count int
+		want  []uint16
+	}{
+		{name: "contiguous run is preferred over an earlier hole", taken: []uint16{20001}, count: 3, want: []uint16{20002, 20003, 20004}},
+		{name: "without a run the first free ports are used, through the last", taken: []uint16{20001, 20003}, count: 4, want: []uint16{20000, 20002, 20004, 20005}},
+		{name: "too few free ports", taken: []uint16{20000, 20001, 20002, 20003}, count: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			taken := func(port uint16) (bool, error) { return slices.Contains(test.taken, port), nil }
+			ports, err := poolPorts(test.count, pool, taken)
+			if err != nil || !slices.Equal(ports, test.want) {
+				t.Fatalf("poolPorts = %v, %v; want %v", ports, err, test.want)
+			}
+		})
 	}
 }
 

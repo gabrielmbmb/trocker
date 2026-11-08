@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -23,9 +24,47 @@ type Manifest struct {
 	DockerSocketServices []string                   `yaml:"docker_socket_services"`
 	HostAccess           map[string]HostAccessGrant `yaml:"host_access"`
 	StablePorts          bool                       `yaml:"stable_ports"`
+	StablePortRange      string                     `yaml:"stable_port_range"`
 	Endpoints            map[string]Endpoint        `yaml:"endpoints"`
 	Bindings             map[string]Bindings        `yaml:"bindings"`
 	Directory            string                     `yaml:"-"`
+}
+
+// DefaultStablePortRange ends below 32768, where Linux's default ephemeral
+// range begins, so on Linux, macOS, and Windows defaults it never contains a
+// port the OS hands to another program's dynamic listener.
+var DefaultStablePortRange = PortRange{First: 20000, Last: 32767}
+
+// lowestStablePort keeps assignments out of the well-known ports, which system
+// services occupy and rootless Docker cannot publish without extra privileges.
+const lowestStablePort = 1024
+
+// PortRange is an inclusive range of TCP ports.
+type PortRange struct {
+	First uint16
+	Last  uint16
+}
+
+func (r PortRange) Contains(port uint16) bool { return port >= r.First && port <= r.Last }
+
+func (r PortRange) Overlaps(other PortRange) bool {
+	return r.First <= other.Last && other.First <= r.Last
+}
+
+func (r PortRange) String() string { return fmt.Sprintf("%d-%d", r.First, r.Last) }
+
+// ParsePortRange reads an inclusive first-last range such as 20000-32767.
+func ParsePortRange(value string) (PortRange, bool) {
+	first, last, found := strings.Cut(value, "-")
+	if !found {
+		return PortRange{}, false
+	}
+	start, startErr := strconv.ParseUint(first, 10, 16)
+	end, endErr := strconv.ParseUint(last, 10, 16)
+	if startErr != nil || endErr != nil || start < lowestStablePort || start > end {
+		return PortRange{}, false
+	}
+	return PortRange{First: uint16(start), Last: uint16(end)}, true
 }
 
 type Endpoint struct {
@@ -168,6 +207,14 @@ func (m *Manifest) resolveSharedWritePaths() ([]string, error) {
 // Inside reports whether path is the manifest directory or below it.
 func (m *Manifest) Inside(path string) bool { return Inside(m.Directory, path) }
 
+// StablePortPool returns the declared stable_port_range, or the default.
+func (m *Manifest) StablePortPool() PortRange {
+	if pool, ok := ParsePortRange(m.StablePortRange); ok {
+		return pool
+	}
+	return DefaultStablePortRange
+}
+
 // AllowsWrite reports whether a bind mount source may be mounted writable.
 // Callers must pass a clean absolute path, which Compose produces.
 func (m *Manifest) AllowsWrite(source string) bool { return allows(m.ReadWritePaths, source) }
@@ -263,6 +310,9 @@ func (m *Manifest) Validate() error {
 	if err := m.validateHostAccess(); err != nil {
 		return err
 	}
+	if err := m.validateStablePortRange(); err != nil {
+		return err
+	}
 	for name, endpoint := range m.Endpoints {
 		if !aliasPattern.MatchString(name) {
 			return invalid("endpoints", "invalid endpoint alias")
@@ -281,6 +331,19 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	return m.validateBindings()
+}
+
+func (m *Manifest) validateStablePortRange() error {
+	if m.StablePortRange == "" {
+		return nil
+	}
+	if !m.StablePorts {
+		return invalid("stable_port_range", "requires stable_ports: true")
+	}
+	if _, ok := ParsePortRange(m.StablePortRange); !ok {
+		return invalid("stable_port_range", fmt.Sprintf("expected first-last, from %d through 65535, with first not above last", lowestStablePort))
+	}
+	return nil
 }
 
 // validateProfiles checks names and duplicates. A nonempty selection replaces
