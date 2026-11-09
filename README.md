@@ -200,7 +200,7 @@ bindings:
         API_URL: "{{ endpoints.api.host.url }}"
 ```
 
-This example requires Compose services named `backend` and `web`, with `backend` declaring TCP port `8000` through `ports` or `expose`. When starting only `web`, declare `backend` in its `depends_on` or select both services.
+This example requires Compose services named `backend` and `web`, with `backend` declaring TCP port `8000` through `ports` or `expose`. When starting only `web`, declare `backend` in its `depends_on` or select both services. With `stable_ports`, a `host` address is the exception: its port is fixed before `backend` starts, so `web` can start alone.
 
 - **Container addresses** use Compose DNS, such as `http://backend:8000`.
 - **Host addresses** use assigned loopback ports for local applications or browsers, not container-to-container requests. With `stable_ports: true`, those assignments are stable and available through `trocker ports --json`.

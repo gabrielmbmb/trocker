@@ -2,6 +2,7 @@ package plan_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gabrielmbmb/trocker/internal/compose"
@@ -60,6 +61,53 @@ func TestAllocatedBindingsAndAliases(t *testing.T) {
 	selected, err := plan.Build(manifest, source, registration, plan.Options{Services: []string{"api"}, Preview: true})
 	if err != nil || len(selected.Services) != 1 {
 		t.Fatal("selection changed", err)
+	}
+}
+
+// A stable host port is known before its service starts, so a consumer may
+// name it while the run leaves that service out. Without stable ports the port
+// is chosen at startup, and a container reference needs the service itself.
+func TestBindingsToServicesLeftOutOfTheRun(t *testing.T) {
+	_, path := fixture(t, "services:\n  api: {image: busybox, expose: ['8000']}\n  web: {image: busybox}\n")
+	api := plan.PortKey{Service: "api", Port: 8000}
+	for _, test := range []struct {
+		name      string
+		stable    bool
+		reference string
+		ports     map[plan.PortKey]uint16
+		want      string
+		failure   string
+	}{
+		{name: "stable host url", stable: true, reference: "host.url", ports: map[plan.PortKey]uint16{api: 24001}, want: "http://127.0.0.1:24001"},
+		{name: "stable port not assigned yet", stable: true, reference: "host.url", failure: "no stable host port yet"},
+		{name: "ports chosen at startup", reference: "host.url", ports: map[plan.PortKey]uint16{api: 24001}, failure: "not selected"},
+		{name: "container address", stable: true, reference: "container.url", ports: map[plan.PortKey]uint16{api: 24001}, failure: "not selected"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest, source, err := compose.LoadForPlan(t.Context(), path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.StablePorts = test.stable
+			manifest.Endpoints = map[string]config.Endpoint{"api": {Service: "api", Port: 8000, Scheme: "http"}}
+			manifest.Bindings = map[string]config.Bindings{"web": {Environment: map[string]string{"URL": "{{ endpoints.api." + test.reference + " }}"}}}
+			project, err := plan.Build(manifest, source, workspace.Registration{ID: "e353936d-8f28-4b8e-a7a2-a629702886bd"}, plan.Options{Services: []string{"web"}, Ports: test.ports})
+			if test.failure != "" {
+				if err == nil || !strings.Contains(err.Error(), test.failure) {
+					t.Fatalf("error = %v, want %q", err, test.failure)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, included := project.Services["api"]; included {
+				t.Fatal("binding added its endpoint service to the run")
+			}
+			if got := project.Services["web"].Environment["URL"]; got == nil || *got != test.want {
+				t.Fatalf("URL = %v, want %s", got, test.want)
+			}
+		})
 	}
 }
 

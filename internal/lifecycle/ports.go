@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"strconv"
 
@@ -192,6 +193,18 @@ func claimAvailablePort(ctx context.Context, store state.Store, preferred uint16
 	return 0, nil, &allocationError{}
 }
 
+// bindingAddresses adds the stable host ports of services this run leaves out,
+// which bindings may name, to the ports it allocated. Those ports are never
+// claimed here: the services' own containers, or a later run, hold them.
+func bindingAddresses(allocated, stable map[plan.PortKey]uint16) map[plan.PortKey]uint16 {
+	if len(stable) == 0 {
+		return allocated
+	}
+	addresses := maps.Clone(stable)
+	maps.Copy(addresses, allocated)
+	return addresses
+}
+
 func portRequirements(prepared PlanResult, stable map[plan.PortKey]uint16) ([]plan.Requirement, error) {
 	if !prepared.StablePorts {
 		required, err := plan.RequiredPorts(prepared.manifest, prepared.Project)
@@ -237,9 +250,10 @@ func startPlanned(ctx context.Context, store state.Store, prepared PlanResult, t
 		if err != nil {
 			return nil, err
 		}
-		project, err := plan.Build(prepared.manifest, prepared.source, prepared.Registration, plan.Options{Services: options.Services, Ports: allocation.ports})
+		addresses := bindingAddresses(allocation.ports, stable)
+		project, err := plan.Build(prepared.manifest, prepared.source, prepared.Registration, plan.Options{Services: options.Services, Ports: addresses})
 		if err == nil {
-			err = prepareContainerFiles(ctx, store, prepared, target.ID, project, plan.Options{Ports: allocation.ports}, templates)
+			err = prepareContainerFiles(ctx, store, prepared, target.ID, project, plan.Options{Ports: addresses}, templates)
 		}
 		if err == nil {
 			err = target.Up(ctx, project, options, output)

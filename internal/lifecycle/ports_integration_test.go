@@ -527,6 +527,44 @@ func TestStablePortsAssignBeforeStartupAndPersist(t *testing.T) {
 	}
 }
 
+// A consumer started on its own binds the stable address of a service the run
+// leaves out, while that service's container already holds the port: the run
+// must use the address without claiming the port.
+func TestStableHostBindingNamesARunningServiceLeftOutOfTheRun(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	web := `  web:
+    image: busybox:1.37
+    stop_grace_period: 1s
+    command: [sh, -c, 'mkdir -p /www; printf "%s" "$$BROWSER_API_URL" > /www/url; httpd -f -p 8080 -h /www']
+    expose: ['8080']
+`
+	composeContent := strings.Replace(strings.Replace(upCompose, "expose: ['8000']", "ports: ['8000']", 1), "volumes:\n  data:", web+"volumes:\n  data:", 1)
+	manifest := `version: 1
+compose: [compose.yaml]
+stable_ports: true
+endpoints:
+  api: {service: api, port: 8000, scheme: http}
+  web: {service: web, port: 8080, scheme: http}
+bindings:
+  web:
+    environment:
+      BROWSER_API_URL: "{{ endpoints.api.host.url }}"
+`
+	main, store, _, _ := workspaceFixture(t, ctx, composeContent, manifest)
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true, Services: []string{"api"}}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lifecycle.Up(ctx, main, store, compose.UpOptions{Detach: true, Services: []string{"web"}}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	endpoints, err := lifecycle.Endpoints(ctx, main, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyAdvertisedURL(t, ctx, endpoints)
+}
+
 func TestStablePortConflictDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()

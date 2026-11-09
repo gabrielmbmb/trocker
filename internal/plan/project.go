@@ -420,7 +420,16 @@ func resolve(reference, consumer string, manifest *config.Manifest, project *typ
 		return manifest.Bindings[consumer].Files[parts[1]].Target, nil
 	}
 	endpoint := manifest.Endpoints[parts[1]]
-	if _, ok := project.Services[endpoint.Service]; !ok {
+	_, selected := project.Services[endpoint.Service]
+	if parts[2] == "host" && !selected && manifest.StablePorts {
+		// A stable host port is fixed before its service starts, so a consumer
+		// may name it while this run leaves that service out.
+		if parts[3] != "host" && options.Ports[PortKey{Service: endpoint.Service, Port: endpoint.Port}] == 0 && !options.Preview {
+			return "", fmt.Errorf("endpoint service %s has no stable host port yet; start it once or run trocker init", endpoint.Service)
+		}
+		return resolveHost(endpoint, parts[3], options)
+	}
+	if !selected {
 		return "", fmt.Errorf("endpoint service is not selected; include it or declare depends_on")
 	}
 	if parts[2] == "host" {

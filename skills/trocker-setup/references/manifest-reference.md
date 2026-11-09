@@ -306,7 +306,7 @@ Rules:
 | `endpoints.api.host.port` | Observed published host port |
 | `endpoints.api.host.url` | Scheme + observed host address + port |
 
-A container consumer using a container address must share a Compose network with the endpoint service. Host addresses are for native processes or browser-facing values; they are not typically reachable from another container's loopback interface.
+A binding's endpoint service must be selected in the same run, or reached through `depends_on`. With `stable_ports`, a `host` address is the exception, because its port is assigned before the service starts. A container consumer using a container address must share a Compose network with the endpoint service. Host addresses are for native processes or browser-facing values; they are not typically reachable from another container's loopback interface.
 
 ## Generated files
 
